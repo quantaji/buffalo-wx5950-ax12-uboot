@@ -68,8 +68,10 @@ enum {
 	UDP_PKT,
 };
 
-#define ADPT_ACL_HPPE_IPV4_DIP_RULE 4
-#define MAX_RULE 512
+#define ADPT_ACL_HPPE_IPV4_DIP_RULE	4
+#define ADPT_ACL_HPPE_MAC_SA_RULE	1
+#define ADPT_ACL_HPPE_MAC_DA_RULE	0
+#define MAX_RULE			512
 
 struct ipo_rule_reg {
         uint32_t  rule_field_0:32;
@@ -106,8 +108,10 @@ union ipo_mask_reg_u {
 struct ipo_action {
         uint32_t  dest_info_change_en:1;
 	uint32_t  fwd_cmd:2;
-	uint32_t  _reserved0:29;
-	uint32_t  _reserved1:32;
+	uint32_t  _reserved0:15;
+	uint32_t bypass_bitmap_0:14;
+	uint32_t bypass_bitmap_1:18;
+	uint32_t  _reserved1:14;
 	uint32_t  _reserved2:32;
 	uint32_t  _reserved3:32;
 	uint32_t  _reserved4:32;
@@ -131,6 +135,13 @@ union ipo_action_u {
 #define IPQ9574_PPE_L3_VP_PORT_TBL_ADDR		(IPQ9574_PPE_IPE_L3_BASE_ADDR + 0x4000)
 #define IPQ9574_PPE_L3_VP_PORT_TBL_INC		0x10
 
+#define IPQ9574_PPE_TL_PORT_VP_TBL_ADDR		0x302000
+#define IPQ9574_PPE_MRU_MTU_CTRL_TBL_ADDR	0x65000
+#define IPQ9574_PPE_MC_MTU_CTRL_TBL_ADDR	0x60a00
+#define IPQ9574_PPE_PORT_EG_VLAN_TBL_ADDR	0x20020
+
+#define IPQ9574_PPE_UCAST_QUEUE_AC_EN_BASE_ADDR 0x848000
+#define IPQ9574_PPE_MCAST_QUEUE_AC_EN_BASE_ADDR 0x84a000
 #define IPQ9574_PPE_QUEUE_MANAGER_BASE_ADDR	0x800000
 #define IPQ9574_PPE_UCAST_QUEUE_MAP_TBL_ADDR	0x10000
 #define IPQ9574_PPE_UCAST_QUEUE_MAP_TBL_INC	0x10

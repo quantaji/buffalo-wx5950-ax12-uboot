@@ -81,7 +81,7 @@ void ppe_ipo_action_set(union ipo_action_u *hw_act, int rule_id)
 	}
 }
 
-void ipq9574_ppe_acl_set(int rule_id, int rule_type, int pkt_type, int l4_port_no, int l4_port_mask, int permit, int deny)
+void ipq9574_ppe_acl_set(int rule_id, int rule_type, int field0, int field1, int mask, int permit, int deny)
 {
 	union ipo_rule_reg_u hw_reg = {0};
 	union ipo_mask_reg_u hw_mask = {0};
@@ -92,30 +92,44 @@ void ipq9574_ppe_acl_set(int rule_id, int rule_type, int pkt_type, int l4_port_n
 	memset(&hw_act, 0, sizeof(hw_act));
 
 	if (rule_id < MAX_RULE) {
+		hw_act.bf.dest_info_change_en = 1;
+		hw_mask.bf.maskfield_0 = mask;
+		hw_reg.bf.rule_type = rule_type;
 		if (rule_type == ADPT_ACL_HPPE_IPV4_DIP_RULE) {
-			hw_reg.bf.rule_type = ADPT_ACL_HPPE_IPV4_DIP_RULE;
-			hw_reg.bf.rule_field_0 = l4_port_no;
-			hw_reg.bf.rule_field_1 = pkt_type<<17;
-			hw_mask.bf.maskfield_0 = l4_port_mask;
+			hw_reg.bf.rule_field_0 = field1;
+			hw_reg.bf.rule_field_1 = field0<<17;
 			hw_mask.bf.maskfield_1 = 7<<17;
 			if (permit == 0x0) {
-				hw_act.bf.dest_info_change_en = 1;
-				hw_act.bf.fwd_cmd = 0;/*forward*/
+				hw_act.bf.fwd_cmd = 0;/* forward */
 				hw_reg.bf.pri = 0x1;
 			}
-
 			if (deny == 0x1) {
-				hw_act.bf.dest_info_change_en = 1;
-				hw_act.bf.fwd_cmd = 1;/*drop*/
+				hw_act.bf.fwd_cmd = 1;/* drop */
 				hw_reg.bf.pri = 0x0;
-
 			}
-			hw_reg.bf.src_0 = 0x0;
-			hw_reg.bf.src_1 = 0x3f;
-			ppe_ipo_rule_reg_set(&hw_reg, rule_id);
-			ppe_ipo_mask_reg_set(&hw_mask, rule_id);
-			ppe_ipo_action_set(&hw_act, rule_id);
+		} else if (rule_type == ADPT_ACL_HPPE_MAC_SA_RULE) {
+			/* src mac AC rule */
+			hw_reg.bf.rule_field_0 = field1;
+			hw_reg.bf.rule_field_1 = field0;
+			hw_mask.bf.maskfield_1 = 0xffff;
+			hw_act.bf.fwd_cmd = 1;/* drop */
+			hw_reg.bf.pri = 0x2;
+			/* bypass fdb lean and fdb freash */
+			hw_act.bf.bypass_bitmap_0 = 0x1800;
+		} else if (rule_type == ADPT_ACL_HPPE_MAC_DA_RULE) {
+			/* dest mac AC rule */
+			hw_reg.bf.rule_field_0 = field1;
+			hw_reg.bf.rule_field_1 = field0;
+			hw_mask.bf.maskfield_1 = 0xffff;
+			hw_act.bf.fwd_cmd = 1;/* drop */
+			hw_reg.bf.pri = 0x2;
 		}
+		/* bind port1-port6 */
+		hw_reg.bf.src_0 = 0x0;
+		hw_reg.bf.src_1 = 0x3F;
+		ppe_ipo_rule_reg_set(&hw_reg, rule_id);
+		ppe_ipo_mask_reg_set(&hw_mask, rule_id);
+		ppe_ipo_action_set(&hw_act, rule_id);
 	}
 }
 
@@ -153,7 +167,7 @@ static void ipq9574_ppe_ucast_queue_map_tbl_queue_id_set(int queue, int port)
  */
 static void ipq9574_vsi_setup(int vsi, uint8_t group_mask)
 {
-	uint32_t val = (group_mask << 24 | group_mask << 16 | 0x1
+	uint32_t val = (group_mask << 24 | group_mask << 16 | group_mask << 8
 							    | group_mask);
 
 	/* Set mask */
@@ -164,15 +178,20 @@ static void ipq9574_vsi_setup(int vsi, uint8_t group_mask)
 }
 
 /*
- * ipq9574_gmac_port_enable()
+ * ipq9574_gmac_port_disable()
  */
-static void ipq9574_gmac_port_enable(int port)
+static void ipq9574_gmac_port_disable(int port)
 {
 	ipq9574_ppe_reg_write(IPQ9574_PPE_MAC_ENABLE + (0x200 * port), 0x70);
 	ipq9574_ppe_reg_write(IPQ9574_PPE_MAC_SPEED + (0x200 * port), 0x2);
 	ipq9574_ppe_reg_write(IPQ9574_PPE_MAC_MIB_CTL + (0x200 * port), 0x1);
 }
 
+/*
+ * ppe_port_bridge_txmac_set()
+ * TXMAC should be disabled for all ports by default
+ * TXMAC should be enabled for all ports that are link up alone
+ */
 void ppe_port_bridge_txmac_set(int port_id, int status)
 {
 	uint32_t reg_value = 0;
@@ -624,84 +643,96 @@ static void ipq9574_ppe_tdm_configuration(void)
 	ipq9574_ppe_reg_write(0xc730, 0x35);
 	ipq9574_ppe_reg_write(0xc740, 0x20);
 	ipq9574_ppe_reg_write(0xc750, 0x36);
-	ipq9574_ppe_reg_write(0xc760, 0x2E);
-	ipq9574_ppe_reg_write(0xc770, 0x03);
-	ipq9574_ppe_reg_write(0xc780, 0x1A);
-	ipq9574_ppe_reg_write(0xc790, 0x1C);
-	ipq9574_ppe_reg_write(0xc7a0, 0x12);
-	ipq9574_ppe_reg_write(0xc7b0, 0x1);
-	ipq9574_ppe_reg_write(0xc7c0, 0xE);
-	ipq9574_ppe_reg_write(0xc7d0, 0x5);
-	ipq9574_ppe_reg_write(0xc7e0, 0x32);
-	ipq9574_ppe_reg_write(0xc7f0, 0x31);
 	ipq9574_ppe_reg_write(0xb000, 0x80000076);
 }
 
 /*
- * ipq9574_ppe_sched_configuration
+ * ipq9574_ppe_queue_ac_enable
  */
-static void ipq9574_ppe_sched_configuration(void)
+static void ipq9574_ppe_queue_ac_enable(void)
 {
-	ipq9574_ppe_reg_write(0x0047a000, 0x15CF65);
-	ipq9574_ppe_reg_write(0x0047a010, 0x159F76);
-	ipq9574_ppe_reg_write(0x0047a020, 0x153F17);
-	ipq9574_ppe_reg_write(0x0047a030, 0x153F56);
-	ipq9574_ppe_reg_write(0x0047a040, 0x15BD01);
-	ipq9574_ppe_reg_write(0x0047a050, 0x15DD65);
-	ipq9574_ppe_reg_write(0x0047a060, 0x15DE20);
-	ipq9574_ppe_reg_write(0x0047a070, 0x15DE65);
-	ipq9574_ppe_reg_write(0x0047a080, 0x159F06);
-	ipq9574_ppe_reg_write(0x0047a090, 0x15BB52);
-	ipq9574_ppe_reg_write(0x0047a0a0, 0x15FA60);
-	ipq9574_ppe_reg_write(0x0047a0b0, 0x15BE56);
-	ipq9574_ppe_reg_write(0x0047a0c0, 0x159F05);
-	ipq9574_ppe_reg_write(0x0047a0d0, 0x15DE60);
-	ipq9574_ppe_reg_write(0x0047a0e0, 0x157E57);
-	ipq9574_ppe_reg_write(0x0047a0f0, 0x155F65);
-	ipq9574_ppe_reg_write(0x0047a100, 0x159F76);
-	ipq9574_ppe_reg_write(0x0047a110, 0x15BE30);
-	ipq9574_ppe_reg_write(0x0047a120, 0x15BE56);
-	ipq9574_ppe_reg_write(0x0047a130, 0x15B703);
-	ipq9574_ppe_reg_write(0x0047a140, 0x15D765);
-	ipq9574_ppe_reg_write(0x0047a150, 0x15DE40);
-	ipq9574_ppe_reg_write(0x0047a160, 0x15DE65);
-	ipq9574_ppe_reg_write(0x0047a170, 0x159F06);
-	ipq9574_ppe_reg_write(0x0047a180, 0x15AF54);
-	ipq9574_ppe_reg_write(0x0047a190, 0x15EE60);
-	ipq9574_ppe_reg_write(0x0047a1a0, 0x15BE16);
-	ipq9574_ppe_reg_write(0x0047a1b0, 0x159F25);
-	ipq9574_ppe_reg_write(0x0047a1c0, 0x15DE60);
-	ipq9574_ppe_reg_write(0x0047a1d0, 0x157E57);
-	ipq9574_ppe_reg_write(0x0047a1e0, 0x155F05);
-	ipq9574_ppe_reg_write(0x0047a1f0, 0x159F36);
-	ipq9574_ppe_reg_write(0x0047a200, 0x15BE50);
-	ipq9574_ppe_reg_write(0x0047a210, 0x15BE76);
-	ipq9574_ppe_reg_write(0x0047a220, 0x15BD01);
-	ipq9574_ppe_reg_write(0x0047a230, 0x15DD65);
-	ipq9574_ppe_reg_write(0x0047a240, 0x159F06);
-	ipq9574_ppe_reg_write(0x0047a250, 0x159F75);
-	ipq9574_ppe_reg_write(0x0047a260, 0x15DE60);
-	ipq9574_ppe_reg_write(0x0047a270, 0x15FA52);
-	ipq9574_ppe_reg_write(0x0047a280, 0x15DB05);
-	ipq9574_ppe_reg_write(0x0047a290, 0x159F76);
-	ipq9574_ppe_reg_write(0x0047a2a0, 0x159F05);
-	ipq9574_ppe_reg_write(0x0047a2b0, 0x159F16);
-	ipq9574_ppe_reg_write(0x0047a2c0, 0x15BE50);
-	ipq9574_ppe_reg_write(0x0047a2d0, 0x15DE65);
-	ipq9574_ppe_reg_write(0x0047a2e0, 0x159F06);
-	ipq9574_ppe_reg_write(0x0047a2f0, 0x159F25);
-	ipq9574_ppe_reg_write(0x0047a300, 0x159F06);
-	ipq9574_ppe_reg_write(0x0047a310, 0x15BE50);
-	ipq9574_ppe_reg_write(0x0047a320, 0x15BE65);
-	ipq9574_ppe_reg_write(0x0047a330, 0x159F36);
-	ipq9574_ppe_reg_write(0x0047a340, 0x159F05);
-	ipq9574_ppe_reg_write(0x0047a350, 0x159F46);
-	ipq9574_ppe_reg_write(0x0047a360, 0x15BE50);
-	ipq9574_ppe_reg_write(0x0047a370, 0x157E67);
-	ipq9574_ppe_reg_write(0x0047a380, 0x157753);
-	ipq9574_ppe_reg_write(0x0047a390, 0x15F660);
-	ipq9574_ppe_reg_write(0x0047a3a0, 0x15EE54);
-	ipq9574_ppe_reg_write(0x00400000, 0x3b);
+	int i;
+
+	/* ucast queue */
+	for (i = 0; i < 256; i++) {
+		ipq9574_ppe_reg_write(IPQ9574_PPE_UCAST_QUEUE_AC_EN_BASE_ADDR
+					+ (i * 0x10), 0x32120001);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_UCAST_QUEUE_AC_EN_BASE_ADDR
+					+ (i * 0x10) + 0x4, 0x0);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_UCAST_QUEUE_AC_EN_BASE_ADDR
+					+ (i * 0x10) + 0x8, 0x0);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_UCAST_QUEUE_AC_EN_BASE_ADDR
+					+ (i * 0x10) + 0xc, 0x48000);
+	}
+
+	/* mcast queue */
+	for (i = 0; i < 44; i++) {
+		ipq9574_ppe_reg_write(IPQ9574_PPE_MCAST_QUEUE_AC_EN_BASE_ADDR
+					+ (i * 0x10), 0x00fa0001);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_MCAST_QUEUE_AC_EN_BASE_ADDR
+					+ (i * 0x10) + 0x4, 0x0);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_MCAST_QUEUE_AC_EN_BASE_ADDR
+					+ (i * 0x10) + 0x8, 0x1200);
+	}
+}
+
+/*
+ * ipq9574_ppe_enable_port_counter
+ */
+static void ipq9574_ppe_enable_port_counter(void)
+{
+	int i;
+	uint32_t reg = 0;
+
+	for (i = 0; i < 7; i++) {
+		/* MRU_MTU_CTRL_TBL.rx_cnt_en, MRU_MTU_CTRL_TBL.tx_cnt_en */
+		ipq9574_ppe_reg_read(IPQ9574_PPE_MRU_MTU_CTRL_TBL_ADDR
+					+ (i * 0x10), &reg);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_MRU_MTU_CTRL_TBL_ADDR
+					+ (i * 0x10), reg);
+		ipq9574_ppe_reg_read(IPQ9574_PPE_MRU_MTU_CTRL_TBL_ADDR
+					+ (i * 0x10) + 0x4, &reg);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_MRU_MTU_CTRL_TBL_ADDR
+					+ (i * 0x10) + 0x4, reg | 0x284303);
+		ipq9574_ppe_reg_read(IPQ9574_PPE_MRU_MTU_CTRL_TBL_ADDR
+					+ (i * 0x10) + 0x8, &reg);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_MRU_MTU_CTRL_TBL_ADDR
+					+ (i * 0x10) + 0x8, reg);
+		ipq9574_ppe_reg_read(IPQ9574_PPE_MRU_MTU_CTRL_TBL_ADDR
+					+ (i * 0x10) + 0xc, &reg);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_MRU_MTU_CTRL_TBL_ADDR
+					+ (i * 0x10) + 0xc, reg);
+
+		/* MC_MTU_CTRL_TBL.tx_cnt_en */
+		ipq9574_ppe_reg_read(IPQ9574_PPE_MC_MTU_CTRL_TBL_ADDR
+					+ (i * 0x4), &reg);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_MC_MTU_CTRL_TBL_ADDR
+					+ (i * 0x4), reg | 0x10000);
+
+		/* PORT_EG_VLAN.tx_counting_en */
+		ipq9574_ppe_reg_read(IPQ9574_PPE_PORT_EG_VLAN_TBL_ADDR
+					+ (i * 0x4), &reg);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_PORT_EG_VLAN_TBL_ADDR
+					+ (i * 0x4), reg | 0x100);
+
+		/* TL_PORT_VP_TBL.rx_cnt_en */
+		ipq9574_ppe_reg_read(IPQ9574_PPE_TL_PORT_VP_TBL_ADDR
+					+ (i * 0x10), &reg);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_TL_PORT_VP_TBL_ADDR
+					+ (i * 0x10), reg);
+		ipq9574_ppe_reg_read(IPQ9574_PPE_TL_PORT_VP_TBL_ADDR
+					+ (i * 0x10) + 0x4, &reg);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_TL_PORT_VP_TBL_ADDR
+					+ (i * 0x10) + 0x4, reg);
+		ipq9574_ppe_reg_read(IPQ9574_PPE_TL_PORT_VP_TBL_ADDR
+					+ (i * 0x10) + 0x8, &reg);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_TL_PORT_VP_TBL_ADDR
+					+ (i * 0x10) + 0x8, reg | 0x20000);
+		ipq9574_ppe_reg_read(IPQ9574_PPE_TL_PORT_VP_TBL_ADDR
+					+ (i * 0x10) + 0xc, &reg);
+		ipq9574_ppe_reg_write(IPQ9574_PPE_TL_PORT_VP_TBL_ADDR
+					+ (i * 0x10) + 0xc, reg);
+	}
 }
 
 /*
@@ -876,7 +907,6 @@ void ipq9574_ppe_provision_init(void)
 
 	/* tdm/sched configuration */
 	ipq9574_ppe_tdm_configuration();
-	ipq9574_ppe_sched_configuration();
 
 #ifdef CONFIG_IPQ9574_BRIDGED_MODE
 	/* Add CPU port 0 to VSI 2 */
@@ -926,23 +956,46 @@ void ipq9574_ppe_provision_init(void)
 		ipq9574_ppe_reg_write(0x403100 + ((i - 1) * 0x40), 0x401000 | i);
 	}
 
+	/* ac enable for queues - disable queue tail drop */
+	ipq9574_ppe_queue_ac_enable();
+
+	/* enable queue counter */
+	ipq9574_ppe_reg_write(0x020044,0x4);
+
+	/* assign the ac group 0 with buffer number */
+	ipq9574_ppe_reg_write(0x84c000, 0x0);
+	ipq9574_ppe_reg_write(0x84c004, 0x7D00);
+	ipq9574_ppe_reg_write(0x84c008, 0x0);
+	ipq9574_ppe_reg_write(0x84c00c, 0x0);
+
+	/* enable physical/virtual port TX/RX counters for all ports (0-6) */
+	ipq9574_ppe_enable_port_counter();
+
 	/*
-	 * Port0 - Port7 learn enable and isolation port bitmap and TX_EN
-	 * Here please pay attention on bit16 (TX_EN) is not set on port7
+	 * Port0 - TX_EN is set by default, Port1 - LRN_EN is set
+	 * Port0 -> CPU Port
+	 * Port1-6 -> Ethernet Ports
+	 * Port7 -> EIP197
 	 */
-	for (i = 0; i < 7; i++)
-		ipq9574_ppe_reg_write(IPQ9574_PPE_PORT_BRIDGE_CTRL_OFFSET + (i * 4),
+	for (i = 0; i < 8; i++) {
+		if (i == 0)
+			ipq9574_ppe_reg_write(IPQ9574_PPE_PORT_BRIDGE_CTRL_OFFSET + (i * 4),
 			      IPQ9574_PPE_PORT_BRIDGE_CTRL_PROMISC_EN |
 			      IPQ9574_PPE_PORT_BRIDGE_CTRL_TXMAC_EN |
 			      IPQ9574_PPE_PORT_BRIDGE_CTRL_PORT_ISOLATION_BMP |
 			      IPQ9574_PPE_PORT_BRIDGE_CTRL_STATION_LRN_EN |
 			      IPQ9574_PPE_PORT_BRIDGE_CTRL_NEW_ADDR_LRN_EN);
-
-	ipq9574_ppe_reg_write(IPQ9574_PPE_PORT_BRIDGE_CTRL_OFFSET + (7 * 4),
-		      IPQ9574_PPE_PORT_BRIDGE_CTRL_PROMISC_EN |
-		      IPQ9574_PPE_PORT_BRIDGE_CTRL_PORT_ISOLATION_BMP |
-		      IPQ9574_PPE_PORT_BRIDGE_CTRL_STATION_LRN_EN |
-		      IPQ9574_PPE_PORT_BRIDGE_CTRL_NEW_ADDR_LRN_EN);
+		else if (i == 7)
+			ipq9574_ppe_reg_write(IPQ9574_PPE_PORT_BRIDGE_CTRL_OFFSET + (i * 4),
+			      IPQ9574_PPE_PORT_BRIDGE_CTRL_PROMISC_EN |
+			      IPQ9574_PPE_PORT_BRIDGE_CTRL_PORT_ISOLATION_BMP |
+			      IPQ9574_PPE_PORT_BRIDGE_CTRL_STATION_LRN_EN |
+			      IPQ9574_PPE_PORT_BRIDGE_CTRL_NEW_ADDR_LRN_EN);
+		else
+			ipq9574_ppe_reg_write(IPQ9574_PPE_PORT_BRIDGE_CTRL_OFFSET + (i * 4),
+			      IPQ9574_PPE_PORT_BRIDGE_CTRL_PROMISC_EN |
+			      IPQ9574_PPE_PORT_BRIDGE_CTRL_PORT_ISOLATION_BMP);
+	}
 
 	/* Global learning */
 	ipq9574_ppe_reg_write(0x060038, 0xc0);
@@ -963,9 +1016,9 @@ void ipq9574_ppe_provision_init(void)
 		ipq9574_ppe_reg_write(IPQ9574_PPE_STP_BASE + (0x4 * i), 0x3);
 
 	ipq9574_ppe_interface_mode_init();
-	/* Port 0-5 disable */
+	/* Port 1-6 disable */
 	for (i = 0; i < 6; i++) {
-		ipq9574_gmac_port_enable(i);
+		ipq9574_gmac_port_disable(i);
 		ppe_port_bridge_txmac_set(i + 1, 1);
 	}
 
