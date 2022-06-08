@@ -859,7 +859,7 @@ __weak void fdt_fixup_set_qca_cold_reboot_enable(void *blob)
 	return;
 }
 
-__weak void fdt_fixup_wcss_rproc_for_atf(void *blob)
+__weak void fdt_fixup_for_atf(void *blob)
 {
 	return;
 }
@@ -892,6 +892,58 @@ __weak void fdt_fixup_sdx65_gpio(void *blob)
 }
 
 __weak void fdt_fixup_runtime_failsafe(void *blob)
+{
+	return;
+}
+
+__weak void ipq_fdt_fixup_socinfo(void *blob)
+{
+	uint32_t cpu_type;
+	uint32_t soc_version, soc_version_major, soc_version_minor;
+	int nodeoff, ret;
+
+	nodeoff = fdt_path_offset(blob, "/");
+
+	if (nodeoff < 0) {
+		printf("ipq: fdt fixup cannot find root node\n");
+		return;
+	}
+
+	ret = ipq_smem_get_socinfo_cpu_type(&cpu_type);
+	if (!ret) {
+		ret = fdt_setprop(blob, nodeoff, "cpu_type",
+				  &cpu_type, sizeof(cpu_type));
+		if (ret)
+			printf("%s: cannot set cpu type %d\n", __func__, ret);
+	} else {
+		printf("%s: cannot get socinfo\n", __func__);
+	}
+
+	ret = ipq_smem_get_socinfo_version((uint32_t *)&soc_version);
+	if (!ret) {
+		soc_version_major = SOCINFO_VERSION_MAJOR(soc_version);
+		soc_version_minor = SOCINFO_VERSION_MINOR(soc_version);
+
+		ret = fdt_setprop(blob, nodeoff, "soc_version_major",
+				  &soc_version_major,
+				  sizeof(soc_version_major));
+		if (ret)
+			printf("%s: cannot set soc_version_major %d\n",
+			       __func__, soc_version_major);
+
+		ret = fdt_setprop(blob, nodeoff, "soc_version_minor",
+				  &soc_version_minor,
+				  sizeof(soc_version_minor));
+		if (ret)
+			printf("%s: cannot set soc_version_minor %d\n",
+			       __func__, soc_version_minor);
+	} else {
+		printf("%s: cannot get soc version\n", __func__);
+	}
+	return;
+}
+
+__weak void fdt_fixup_auto_restart(void *blob)
 {
 	return;
 }
@@ -965,6 +1017,7 @@ int ft_board_setup(void *blob, bd_t *bd)
 		{ "qcom,ebi2-nandc-bam-v2.1.1", MTD_DEV_TYPE_NAND, 0 },
 		{ "qcom,ipq9574-nand", MTD_DEV_TYPE_NAND, 0 },
 		{ "qcom,ipq8074-nand", MTD_DEV_TYPE_NAND, 0 },
+		{ "qcom,devsoc-nand", MTD_DEV_TYPE_NAND, 0 },
 		{ "spinand,mt29f", MTD_DEV_TYPE_NAND, 1 },
 		{ "n25q128a11", MTD_DEV_TYPE_NAND,
 				CONFIG_IPQ_SPI_NOR_INFO_IDX },
@@ -1069,7 +1122,7 @@ int ft_board_setup(void *blob, bd_t *bd)
 		fdt_fixup_set_qce_fixed_key(blob);
 	if (is_atf_enabled()) {
 		fdt_fixup_set_qca_cold_reboot_enable(blob);
-		fdt_fixup_wcss_rproc_for_atf(blob);
+		fdt_fixup_for_atf(blob);
 	}
 	s = getenv("bt_debug");
 	if (s) {

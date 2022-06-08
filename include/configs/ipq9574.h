@@ -150,8 +150,8 @@ extern loff_t board_env_size;
 #define HAVE_BLOCK_DEVICE
 #define CONFIG_DOS_PARTITION
 
-#define CONFIG_IPQ9574_I2C 1
-#ifdef CONFIG_IPQ9574_I2C
+#define CONFIG_IPQ_I2C 1
+#ifdef CONFIG_IPQ_I2C
 #define CONFIG_SYS_I2C_QUP
 #define CONFIG_CMD_I2C
 #define CONFIG_DM_I2C
@@ -404,4 +404,13 @@ extern loff_t board_env_size;
 #define CONFIG_IPQ_FDT_FIXUP
 #define CONFIG_ARMV7_PSCI
 #define CONFIG_VERSION_ROLLBACK_PARTITION_INFO
+
+/*
+ * Undefine configs not needed
+ */
+#undef CONFIG_BOOTM_NETBSD
+#undef CONFIG_BOOTM_PLAN9
+#undef CONFIG_BOOTM_RTEMS
+#undef CONFIG_BOOTM_VXWORKS
+
 #endif /* _IPQ9574_H */

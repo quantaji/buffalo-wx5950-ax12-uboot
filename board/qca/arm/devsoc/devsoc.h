@@ -31,6 +31,12 @@ extern const add_node_t add_fdt_node[];
 #define BLSP1_UART0_BASE			0x078AF000
 #define UART_PORT_ID(reg)			((reg - BLSP1_UART0_BASE) / 0x1000)
 
+#define MSM_SDC1_BASE				0x7800000
+#define MSM_SDC1_SDHCI_BASE			0x7804000
+
+#define TCSR_MODE_CTRL_2PORT_2LANE		0x1947544
+
+#define USB30_GUCTL				0x8A0C12C
 /*
  * weak function
  */
@@ -40,6 +46,19 @@ __weak void qgic_init(void) {}
 __weak void handle_noc_err(void) {}
 __weak void board_pcie_clock_init(int id) {}
 __weak void ubi_power_collapse(void) {}
+
+/*
+ * PCIE
+ */
+enum pcie_port_lane_mode_t{
+	TWO_LANE_MODE =0,
+	TWO_PORT_MODE
+};
+
+#define set_mdelay_clearbits_le32(addr, value, delay)	\
+	 setbits_le32(addr, value);			\
+	 mdelay(delay);					\
+	 clrbits_le32(addr, value);			\
 
 /*
  * SMEM
@@ -153,5 +172,8 @@ int smem_ram_ptable_init_v2(
 		struct usable_ram_partition_table *usable_ram_partition_table);
 void qpic_set_clk_rate(unsigned int clk_rate, int blk_type,
 		int req_clk_src_type);
+#ifdef CONFIG_PCI_IPQ
+void board_pci_init(int id);
+#endif
 
 #endif /* _DEVSOC_CDP_H_ */

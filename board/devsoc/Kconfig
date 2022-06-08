@@ -17,4 +17,16 @@ config NAND_FLASH
 
 config QPIC_SERIAL
 	bool "Enable QPIC serial NAND"
+
+config UBI_WRITE
+	bool "Enable ubi utilities"
+
+config MMC_FLASH
+	bool "Enable MMC flash support"
+
+config PCI_IPQ
+	bool "Enable pci support"
+
+config USB_XHCI_IPQ
+	bool "Enable usb support"
 endif

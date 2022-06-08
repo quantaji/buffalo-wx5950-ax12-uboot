@@ -268,6 +268,67 @@ extern loff_t board_env_size;
 #define CONFIG_QSPI_LAYOUT_SWITCH
 #endif
 
+/*
+ * UBI write command
+ */
+#ifdef CONFIG_UBI_WRITE
+#define CONFIG_CMD_UBI
+#define CONFIG_RBTREE
+#define IPQ_UBI_VOL_WRITE_SUPPORT
+#endif
+
+/*
+ * MMC configs
+ */
+#ifdef CONFIG_MMC_FLASH
+#define CONFIG_QCA_MMC
+#define CONFIG_MMC
+#define CONFIG_CMD_MMC
+#define CONFIG_GENERIC_MMC
+#define CONFIG_SDHCI
+#define CONFIG_SDHCI_QCA
+#define CONFIG_ENV_IS_IN_MMC
+#define CONFIG_SYS_MMC_ENV_DEV			0
+#define CONFIG_SDHCI_SUPPORT
+#define CONFIG_MMC_ADMA
+#define CONFIG_EFI_PARTITION
+/*
+* eMMC controller support only 4-bit
+* force SDHC driver to 4-bit mode
+*/
+#define CONFIG_MMC_FORCE_CAP_4BIT_BUSWIDTH
+#endif
+
+#define CONFIG_IPQ_FDT_FIXUP
+#define CONFIG_FDT_FIXUP_PARTITIONS
+#define CONFIG_OF_BOARD_SETUP
+/*
+ * PCIE Enable
+ */
+#define PCI_MAX_DEVICES				3
+#ifdef CONFIG_PCI_IPQ
+#define CONFIG_PCI
+#define CONFIG_CMD_PCI
+#define CONFIG_PCI_SCAN_SHOW
+#endif
+
+/*
+ * USB Support
+ */
+#ifdef CONFIG_USB_XHCI_IPQ
+#define CONFIG_USB_XHCI
+#define CONFIG_USB_XHCI_DWC3
+#define CONFIG_CMD_USB
+#define CONFIG_USB_STORAGE
+#define CONFIG_SYS_USB_XHCI_MAX_ROOT_PORTS      2
+#define CONFIG_USB_MAX_CONTROLLER_COUNT         1
+/*
+ * Block Device & Disk  Partition Config
+ */
+#define HAVE_BLOCK_DEVICE
+#define CONFIG_DOS_PARTITION
+#endif
+
 #undef CONFIG_BOOTM_NETBSD
 #undef CONFIG_BOOTM_PLAN9
 #undef CONFIG_BOOTM_RTEMS
