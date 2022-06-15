@@ -18,8 +18,8 @@
 / {
 	model ="QCA, DEVSOC-EMULATION";
 	compatible = "qca,devsoc", "qca,devsoc-emulation";
-	machid = <0xF040000>;
-	config_name = "config@emulation";
+	machid = <0xF060000>;
+	config_name = "config@emulation-fbc";
 
 	aliases {
 		console = "/serial@78AF000";
@@ -168,5 +168,10 @@
 
 	xhci@8a00000 {
 		qcom,emulation = <1>;
+	};
+
+	ess-switch {
+		switch_mac_mode0 = <PORT_WRAPPER_USXGMII>;
+		switch_mac_mode1 = <PORT_WRAPPER_USXGMII>;
 	};
 };
