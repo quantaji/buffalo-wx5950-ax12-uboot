@@ -32,6 +32,21 @@ extern struct sdhci_host mmc_host;
 #endif
 
 #define SMEM_PTN_NAME_MAX     16
+#define GPT_PART_NAME "0:GPT"
+#define GPT_BACKUP_PART_NAME "0:GPTBACKUP"
+
+#ifdef CONFIG_IPQ_MIBIB_RELOAD
+#define HEADER_MAGIC1 0xFE569FAC
+#define HEADER_MAGIC2 0xCD7F127A
+#define HEADER_VERSION 4
+
+#define SHA1_SIG_LEN 41
+
+struct header {
+	unsigned magic[2];
+	unsigned version;
+} __attribute__ ((__packed__));
+#endif
 
 int write_to_flash(int flash_type, uint32_t address, uint32_t offset,
 uint32_t part_size, uint32_t file_size, char *layout)
@@ -279,15 +294,31 @@ char * const argv[])
 		blk_dev = mmc_get_dev(mmc_host.dev_num);
 		if (blk_dev != NULL) {
 
-			ret = get_partition_info_efi_by_name(blk_dev,
-			part_name, &disk_info);
-			if (ret)
-				return retn;
+			if (strncmp(GPT_PART_NAME,
+					(const char *)part_name,
+					sizeof(GPT_PART_NAME))  == 0) {
+				file_size = file_size / blk_dev->blksz;
+				offset = 0;
+				part_size = (ulong) file_size;
+			}
+			else if (strncmp(GPT_BACKUP_PART_NAME,
+					(const char *)part_name,
+					sizeof(GPT_BACKUP_PART_NAME)) == 0) {
+				file_size = file_size / blk_dev->blksz;
+				offset = (ulong) blk_dev->lba - file_size;
+				part_size = (ulong) file_size;
+			}
+			else
+			{
+				ret = get_partition_info_efi_by_name(blk_dev,
+				part_name, &disk_info);
+				if (ret)
+					return retn;
 
-			offset = (ulong)disk_info.start;
-			part_size = (ulong)disk_info.size;
+				offset = (ulong)disk_info.start;
+				part_size = (ulong)disk_info.size;
+			}
 		}
-
 #endif
 	} else if (sfi->flash_type == SMEM_BOOT_SPI_FLASH) {
 
@@ -323,13 +354,30 @@ char * const argv[])
 			blk_dev = mmc_get_dev(mmc_host.dev_num);
 			if (blk_dev != NULL) {
 
-				ret = get_partition_info_efi_by_name(blk_dev,
+				if (strncmp(GPT_PART_NAME,
+					(const char *)part_name,
+					sizeof(GPT_PART_NAME))  == 0) {
+					file_size = file_size / blk_dev->blksz;
+					offset = 0;
+					part_size = (ulong) file_size;
+				}
+				else if (strncmp(GPT_BACKUP_PART_NAME,
+					(const char *)part_name,
+					sizeof(GPT_BACKUP_PART_NAME)) == 0) {
+					file_size = file_size / blk_dev->blksz;
+					offset = (ulong) blk_dev->lba - file_size;
+					part_size = (ulong) file_size;
+				}
+				else
+				{
+					ret = get_partition_info_efi_by_name(blk_dev,
 							part_name, &disk_info);
-				if (ret)
-					return retn;
+					if (ret)
+						return retn;
 
-				offset = (ulong)disk_info.start;
-				part_size = (ulong)disk_info.size;
+					offset = (ulong)disk_info.start;
+					part_size = (ulong)disk_info.size;
+				}
 			}
 #endif
 		} else {
@@ -383,6 +431,122 @@ char * const argv[])
 return ret;
 }
 
+#ifdef CONFIG_IPQ_MIBIB_RELOAD
+static int do_mibib_reload(cmd_tbl_t *cmdtp, int flag, int argc,
+char * const argv[])
+{
+	uint32_t load_addr, file_size;
+	uint32_t page_size;
+	uint8_t flash_type;
+	struct header* mibib_hdr;
+	qca_smem_flash_info_t *sfi = &qca_smem_flash_info;
+
+	if (argc == 5) {
+		flash_type = simple_strtoul(argv[1], NULL, 16);
+		page_size = simple_strtoul(argv[2], NULL, 16);
+		sfi->flash_block_size = simple_strtoul(argv[3], NULL, 16);
+		sfi->flash_density = simple_strtoul(argv[4], NULL, 16);
+		load_addr = getenv_ulong("fileaddr", 16, 0);
+		file_size = getenv_ulong("filesize", 16, 0);
+	} else
+		return CMD_RET_USAGE;
+
+	if (flash_type > 1) {
+		printf("Invalid flash type \n");
+		return CMD_RET_FAILURE;
+	}
+
+	if (file_size < 2 * page_size) {
+		printf("Invalid filesize \n");
+		return CMD_RET_FAILURE;
+	}
+
+	if (flash_type == 0) {
+		/*NAND*/
+#ifdef CONFIG_QPIC_SERIAL
+		sfi->flash_type = SMEM_BOOT_QSPI_NAND_FLASH;
+#else
+		sfi->flash_type = SMEM_BOOT_NAND_FLASH;
+#endif
+	} else {
+		/* NOR*/
+		sfi->flash_type = SMEM_BOOT_SPI_FLASH;
+	}
+
+	mibib_hdr = (struct header*) load_addr;
+	if (mibib_hdr->magic[0] == HEADER_MAGIC1 &&
+		mibib_hdr->magic[1] == HEADER_MAGIC2 &&
+		mibib_hdr->version == HEADER_VERSION) {
+
+		load_addr += page_size;
+	}
+	else {
+		printf("Header magic/version is invalid\n");
+		return CMD_RET_FAILURE;
+	}
+
+	if (mibib_ptable_init((unsigned int*) load_addr)) {
+		printf("Table magic is invalid\n");
+		return CMD_RET_FAILURE;
+	}
+
+	return CMD_RET_SUCCESS;
+}
+#endif
+
+#ifdef CONFIG_IPQ_XTRACT_N_FLASH
+void print_fl_msg(char *fname, bool started, int ret)
+{
+	printf("######################################## ");
+	printf("Flashing %s %s\n", fname,
+			started ? "Started" : ret ? "Failed" : "Done");
+}
+
+static int do_xtract_n_flash(cmd_tbl_t *cmdtp, int flag, int argc,
+char * const argv[])
+{
+	char runcmd[256], fname_stripped[32];
+	char *file_name, *part_name;
+	uint32_t load_addr, verbose;
+	int ret = CMD_RET_SUCCESS;
+
+	if (argc < 4)
+		return CMD_RET_USAGE;
+
+	verbose = getenv_ulong("verbose", 10, 0);
+	load_addr = simple_strtoul(argv[1], NULL, 16);
+	file_name = argv[2];
+	part_name = argv[3];
+
+	snprintf(fname_stripped , sizeof(fname_stripped),
+		"%.*s:", strlen(file_name) - SHA1_SIG_LEN, file_name);
+
+	if (verbose)
+		print_fl_msg(fname_stripped, 1, ret);
+	else
+		setenv("stdout", "nulldev");
+
+	snprintf(runcmd , sizeof(runcmd),
+		"imxtract 0x%x %s && "
+		"flash %s",
+		load_addr, file_name,
+		part_name);
+
+	if (run_command(runcmd, 0) != CMD_RET_SUCCESS)
+		ret = CMD_RET_FAILURE;
+
+	if (verbose)
+		print_fl_msg(fname_stripped, 0, ret);
+	else {
+		setenv("stdout", "serial");
+		printf("Flashing %-30s %s\n", fname_stripped,
+				ret ? "[ failed ]" : "[ done ]");
+	}
+
+	return ret;
+}
+#endif
+
 U_BOOT_CMD(
 	flash,       4,      0,      do_flash,
 	"flash part_name \n"
@@ -395,3 +559,19 @@ U_BOOT_CMD(
 	"flerase part_name \n",
 	"erases on flash the given partition \n"
 );
+
+#ifdef CONFIG_IPQ_MIBIB_RELOAD
+U_BOOT_CMD(
+	mibib_reload,       5,      0,      do_mibib_reload,
+	"mibib_reload fl_type pg_size blk_size chip_size\n",
+	"reloads the smem partition info from mibib \n"
+);
+#endif
+
+#ifdef CONFIG_IPQ_XTRACT_N_FLASH
+U_BOOT_CMD(
+	xtract_n_flash,       4,      0,      do_xtract_n_flash,
+	"xtract_n_flash addr filename partname \n",
+	"xtract the image and flash \n"
+);
+#endif

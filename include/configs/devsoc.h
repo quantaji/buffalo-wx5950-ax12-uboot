@@ -49,6 +49,12 @@
 #define CONFIG_ENV_SIZE_MAX			(256 << 10) /* 256 KB */
 
 /*
+ * Enable MIBIB reload
+ */
+#define CONFIG_IPQ_MIBIB_RELOAD
+#define CONFIG_IPQ_XTRACT_N_FLASH
+
+/*
  * Enable Flashwrite command
  */
 #define CONFIG_CMD_FLASHWRITE
@@ -107,7 +113,7 @@
 #define CONFIG_OF_COMBINE			1
 
 #define CONFIG_SMEM_VERSION_C
-#define CONFIG_QCA_SMEM_BASE			0x4AA00000
+#define CONFIG_QCA_SMEM_BASE			0x4A800000
 
 #define CONFIG_IPQ_FDT_HIGH			0x48500000
 #define CONFIG_ENV_IS_IN_SPI_FLASH		1
@@ -115,6 +121,21 @@
 
 #define CONFIG_QCA_UBOOT_OFFSET			0xA100000
 #define CONFIG_UBOOT_END_ADDR			0x4A500000
+
+
+#define CONFIG_SMP_CMD_SUPPORT
+
+#ifdef CONFIG_SMP_CMD_SUPPORT
+#define NR_CPUS				4
+
+#define ARM_PSCI_TZ_FN_BASE			0x84000000
+#define ARM_PSCI_TZ_FN(n)			(ARM_PSCI_TZ_FN_BASE + (n))
+
+#define ARM_PSCI_TZ_FN_CPU_OFF			ARM_PSCI_TZ_FN(2)
+#define ARM_PSCI_TZ_FN_CPU_ON			ARM_PSCI_TZ_FN(3)
+#define ARM_PSCI_TZ_FN_AFFINITY_INFO		ARM_PSCI_TZ_FN(4)
+
+#endif
 
 /*
 * IPQ_TFTP_MIN_ADDR: Starting address of Linux HLOS region.

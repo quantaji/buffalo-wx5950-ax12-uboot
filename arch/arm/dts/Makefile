@@ -94,7 +94,9 @@ endif
 dtb-$(CONFIG_ARCH_DEVSOC) += devsoc-emulation.dtb \
 				devsoc-01.1.dtb \
 				devsoc-01.2.dtb \
-				devsoc-01.4.dtb
+				devsoc-01.4.dtb \
+				devsoc-01.6.dtb \
+				devsoc-01.7.dtb
 
 dtb-$(CONFIG_ARCH_IPQ6018) += ipq6018-cp01-c1.dtb \
 			ipq6018-cp02-c1.dtb \
@@ -112,12 +114,13 @@ dtb-$(CONFIG_ARCH_IPQ9574) += ipq9574-al01-c1.dtb \
 			ipq9574-al02-c8.dtb \
 			ipq9574-al02-c10.dtb \
 			ipq9574-al02-c13.dtb \
+			ipq9574-al02-c18.dtb \
 			ipq9574-db-al01-c1.dtb \
 			ipq9574-db-al01-c2.dtb \
 			ipq9574-db-al01-c3.dtb \
 			ipq9574-db-al02-c1.dtb \
 			ipq9574-db-al02-c2.dtb \
-			ipq9574-db-al02-c3.dtb \
+			ipq9574-db-al02-c3.dtb
 
 dtb-$(CONFIG_ARCH_ROCKCHIP) += \
 	rk3288-firefly.dtb \

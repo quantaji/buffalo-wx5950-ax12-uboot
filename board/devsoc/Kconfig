@@ -24,6 +24,9 @@ config UBI_WRITE
 config MMC_FLASH
 	bool "Enable MMC flash support"
 
+config IPQ_TZT
+	bool "Enable TZ test command"
+
 config PCI_IPQ
 	bool "Enable pci support"
 
@@ -47,4 +50,7 @@ config QCA8033_PHY
 
 config QCA8081_PHY
 	bool "Enable QCA8081 PHY support"
+
+config DPR_EXECUTE
+	bool "Enable DPR support"
 endif
