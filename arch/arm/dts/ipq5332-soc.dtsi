@@ -14,8 +14,8 @@
  */
 
 #include "skeleton.dtsi"
-#include <dt-bindings/qcom/gpio-devsoc.h>
-#include <dt-bindings/qcom/eth-devsoc.h>
+#include <dt-bindings/qcom/gpio-ipq5332.h>
+#include <dt-bindings/qcom/eth-ipq5332.h>
 
 / {
 	serial@78AF000 {
@@ -59,7 +59,7 @@
 	};
 
 	pci0: pci@20000000 {
-		compatible = "qcom,devsoc-pcie";
+		compatible = "qcom,ipq5332-pcie";
 		#address-cells = <1>;
 		#size-cells = <1>;
 		reg = <0x20000000 0xf1d
@@ -69,7 +69,7 @@
 			0x20300000 0xd00000
 			0x20100000 0x100000
 			0x1829000 0x60
-			0x8c000 0x1000>;
+			0x4B0000 0x800>;
 		reg-names = "pci_dbi", "parf", "elbi","dm_iatu", "axi_bars",
 				"axi_conf", "pci_rst", "pci_phy";
 		gen3 = <1>;
@@ -78,7 +78,7 @@
 	};
 
 	pci1: pci@18000000 {
-		compatible = "qcom,devsoc-pcie";
+		compatible = "qcom,ipq5332-pcie";
 		#address-cells = <1>;
 		#size-cells = <1>;
 		reg = <0x18000000 0xf1d
@@ -88,7 +88,7 @@
 			0x18300000 0xd00000
 			0x18100000 0x100000
 			0x1828000 0x60
-			0xF4000 0x1000>;
+			0x4B1000 0x1000>;
 		reg-names = "pci_dbi", "parf", "elbi","dm_iatu", "axi_bars",
 				"axi_conf", "pci_rst", "pci_phy";
 		gen3 = <1>;
@@ -97,7 +97,7 @@
 	};
 
 	pci2: pci@10000000 {
-		compatible = "qcom,devsoc-pcie";
+		compatible = "qcom,ipq5332-pcie";
 		#address-cells = <1>;
 		#size-cells = <1>;
 		reg = <0x10000000 0xf1d
@@ -107,7 +107,7 @@
 			0x10300000 0xd00000
 			0x10100000 0x100000
 			0x182A000 0x60
-			0xFC000 0x1000>;
+			0x4B1800 0x800>;
 		reg-names = "pci_dbi", "parf", "elbi","dm_iatu", "axi_bars",
 				"axi_conf", "pci_rst", "pci_phy";
 		gen3 = <1>;

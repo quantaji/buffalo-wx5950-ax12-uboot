@@ -356,9 +356,10 @@ void ipq_fdt_fixup_mtdparts(void *blob, struct flash_node_info *ni)
 
 void ipq_fdt_mem_rsvd_fixup(void *blob)
 {
-	u32 dload;
+	u32 dload = 1;
 	int parentoff, nodeoff, ret, i;
-	dload = htonl(DLOAD_DISABLE);
+
+	dload = htonl(dload);
 
 	/* Reserve only the TZ and SMEM memory region and free the rest */
 	parentoff = fdt_path_offset(blob, rsvd_node);
@@ -1075,7 +1076,7 @@ int ft_board_setup(void *blob, bd_t *bd)
 		{ "qcom,ebi2-nandc-bam-v2.1.1", MTD_DEV_TYPE_NAND, 0 },
 		{ "qcom,ipq9574-nand", MTD_DEV_TYPE_NAND, 0 },
 		{ "qcom,ipq8074-nand", MTD_DEV_TYPE_NAND, 0 },
-		{ "qcom,devsoc-nand", MTD_DEV_TYPE_NAND, 0 },
+		{ "qcom,ipq5332-nand", MTD_DEV_TYPE_NAND, 0 },
 		{ "spinand,mt29f", MTD_DEV_TYPE_NAND, 1 },
 		{ "n25q128a11", MTD_DEV_TYPE_NAND,
 				CONFIG_IPQ_SPI_NOR_INFO_IDX },

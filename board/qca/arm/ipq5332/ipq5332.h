@@ -13,10 +13,10 @@
  * GNU General Public License for more details.
  */
 
-#ifndef _DEVSOC_CDP_H_
-#define _DEVSOC_CDP_H_
+#ifndef _IPQ5332_CDP_H_
+#define _IPQ5332_CDP_H_
 
-#include <configs/devsoc.h>
+#include <configs/ipq5332.h>
 #include <asm/u-boot.h>
 #include <asm/arch-qca-common/qca_common.h>
 #include "phy.h"
@@ -41,7 +41,6 @@ extern const add_node_t add_fdt_node[];
 
 #define USB30_GUCTL				0x8A0C12C
 
-#define CONFIG_DEVSOC_DMAGIC_ADDR		0x193D100
 #define DLOAD_MAGIC_COOKIE			0x10
 #define DLOAD_DISABLED				0x40
 #define DLOAD_BITS				0xFF
@@ -143,6 +142,11 @@ enum pcie_port_lane_mode_t{
 #define PCIE_0_CLOCK_DISABLE_BIT		11
 #define PCIE_1_CLOCK_DISABLE_BIT		12
 #define PCIE_2_CLOCK_DISABLE_BIT		10
+
+#define PCIE_PARF_SLV_ADDR_SPACE_SIZE		0x358
+#define PCIE_PARF_PHY_CTRL			0x40
+
+#define PCIE_PHY_TEST_PWR_DOWN			0x1
 
 /*
  * GPIO functional configs
@@ -283,4 +287,4 @@ void pcie_reset(int pcie_id);
 #endif
 unsigned int __invoke_psci_fn_smc(unsigned int, unsigned int,
 					 unsigned int, unsigned int);
-#endif /* _DEVSOC_CDP_H_ */
+#endif /* _IPQ5332_CDP_H_ */

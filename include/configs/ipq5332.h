@@ -13,15 +13,15 @@
 * GNU General Public License for more details.
 */
 
-#ifndef _DEVSOC_H
-#define _DEVSOC_H
+#ifndef _IPQ5332_H
+#define _IPQ5332_H
 
 #ifndef DO_DEPS_ONLY
 #include <generated/asm-offsets.h>
 #endif
 
-#define CONFIG_DEVSOC
-#define CONFIG_DEVSOC_RUMI
+#define CONFIG_IPQ5332
+#define CONFIG_IPQ5332_RUMI
 #undef	CONFIG_QCA_DISABLE_SCM
 #define CONFIG_SPI_FLASH_CYPRESS
 #define CONFIG_SYS_NO_FLASH
@@ -40,7 +40,7 @@
 #define CONFIG_BOARD_EARLY_INIT_F
 #define CONFIG_BOARD_LATE_INIT
 
-#define CONFIG_DEVSOC_UART
+#define CONFIG_IPQ5332_UART
 #define CONFIG_NR_DRAM_BANKS			1
 #define CONFIG_SKIP_LOWLEVEL_INIT
 
@@ -154,7 +154,7 @@ extern loff_t board_env_range;
 extern loff_t board_env_size;
 #endif
 
-#define CONFIG_DEVSOC_ENV			1
+#define CONFIG_IPQ5332_ENV			1
 #define CONFIG_ENV_OFFSET			board_env_offset
 #define CONFIG_ENV_SIZE				CONFIG_ENV_SIZE_MAX
 #define CONFIG_ENV_RANGE			board_env_range
@@ -228,9 +228,9 @@ extern loff_t board_env_size;
 /*
 * Ethernet Configs
 */
-#define CONFIG_DEVSOC_EDMA
-#ifdef CONFIG_DEVSOC_EDMA
-#define CONFIG_DEVSOC_BRIDGED_MODE	1
+#define CONFIG_IPQ5332_EDMA
+#ifdef CONFIG_IPQ5332_EDMA
+#define CONFIG_IPQ5332_BRIDGED_MODE	1
 #define CONFIG_NET_RETRY_COUNT		5
 #define CONFIG_SYS_RX_ETH_BUFFER	128
 #define CONFIG_TFTP_BLOCKSIZE		1280
@@ -379,8 +379,11 @@ extern loff_t board_env_size;
  */
 #define CONFIG_OF_BOARD_SETUP
 
+#define TCSR_BOOT_MISC_REG	((u32 *)0x193D100)
+
 #ifdef CONFIG_OF_BOARD_SETUP
-#define DLOAD_DISABLE				0x1
+#define DLOAD_DISABLE		(~BIT(4))
+#define DLOAD_ENABLE		BIT(4)
 #define SET_MAGIC				0x1
 #define CLEAR_MAGIC				0x0
 #define SCM_CMD_TZ_CONFIG_HW_FOR_RAM_DUMP_ID	0x9
@@ -394,7 +397,6 @@ extern loff_t board_env_size;
  * CRASH DUMP ENABLE
  */
 #define CONFIG_QCA_APPSBL_DLOAD
-#define CONFIG_IPQ5018_DMAGIC_ADDR		0x193D100
 #ifdef CONFIG_QCA_APPSBL_DLOAD
 
 #undef CONFIG_NET_RETRY_COUNT
@@ -439,4 +441,4 @@ extern loff_t board_env_size;
 #undef CONFIG_BOOTM_RTEMS
 #undef CONFIG_BOOTM_VXWORKS
 
-#endif /* _DEVSOC_H */
+#endif /* _IPQ5332_H */

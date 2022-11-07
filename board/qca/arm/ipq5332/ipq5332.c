@@ -23,7 +23,7 @@
 #include <asm/arch-qca-common/uart.h>
 #include <asm/arch-qca-common/scm.h>
 #include <asm/arch-qca-common/iomap.h>
-#include <devsoc.h>
+#include <ipq5332.h>
 #ifdef CONFIG_QPIC_NAND
 #include <asm/arch-qca-common/qpic_nand.h>
 #include <nand.h>
@@ -40,7 +40,7 @@
 DECLARE_GLOBAL_DATA_PTR;
 
 static int aq_phy_initialised = 0;
-extern int devsoc_edma_init(void *cfg);
+extern int ipq5332_edma_init(void *cfg);
 extern int ipq_spi_init(u16);
 
 const char *rsvd_node = "/reserved-memory";
@@ -123,7 +123,7 @@ void fdt_fixup_flash(void *blob)
 	int node_off, ret;
 	char *flash = "/soc/nand@79b0000";
 
-	if (gd->bd->bi_arch_number == MACH_TYPE_DEVSOC_EMULATION)
+	if (gd->bd->bi_arch_number == MACH_TYPE_IPQ5332_EMULATION)
 		return;
 
 	node_off = fdt_path_offset(gd->fdt_blob, "nand");
@@ -148,7 +148,7 @@ void ipq_uboot_fdt_fixup(void)
 	void *blob = (void *)gd->fdt_blob;
 	ulong machid = gd->bd->bi_arch_number;
 
-	if (machid == MACH_TYPE_DEVSOC_EMULATION)
+	if (machid == MACH_TYPE_IPQ5332_EMULATION)
 		return;
 
 	/* fix peripherals required for basic board bring up
@@ -268,7 +268,7 @@ void sdhci_bus_pwr_off(struct sdhci_host *host)
 
 __weak void board_mmc_deinit(void)
 {
-	/*since we do not have misc register in devsoc
+	/*since we do not have misc register in ipq5332
 	 * so simply return from this function
 	 */
 	return;
@@ -443,10 +443,9 @@ void board_pci_init(int id)
 
 void board_pci_deinit()
 {
-	int node, gpio_node, i, err, is_x2;
+	int node, gpio_node, i, err;
 	char name[16];
 	struct fdt_resource parf;
-	struct fdt_resource pci_phy;
 
 	for (i = 0; i < PCI_MAX_DEVICES; i++) {
 		snprintf(name, sizeof(name), "pci%d", i);
@@ -457,22 +456,14 @@ void board_pci_deinit()
 		}
 		err = fdt_get_named_resource(gd->fdt_blob, node, "reg",
 				"reg-names", "parf", &parf);
-
-		writel(0x0, parf.start + 0x358);
-		writel(0x1, parf.start + 0x40);
-
-		err = fdt_get_named_resource(gd->fdt_blob, node, "reg",
-				"reg-names", "pci_phy", &pci_phy);
-		if (err < 0)
+		if (err < 0) {
+			printf("Unable to find parf node for PCIE%d \n", i);
 			continue;
+		}
 
-		if ((i == 0) || (i == 1))
-			is_x2 = 0;
-		else
-			is_x2 = 1;
-
-		writel(0x1, pci_phy.start + (0x800 + (0x800 * is_x2)));
-		writel(0x0, pci_phy.start + (0x804 + (0x800 * is_x2)));
+		writel(0x0, parf.start + PCIE_PARF_SLV_ADDR_SPACE_SIZE);
+		writel(PCIE_PHY_TEST_PWR_DOWN,
+				parf.start + PCIE_PARF_PHY_CTRL);
 
 		gpio_node = fdt_subnode_offset(gd->fdt_blob, node, "pci_gpio");
 		if (gpio_node >= 0)
@@ -651,9 +642,15 @@ __weak int ipq_get_tz_version(char *version_name, int buf_size)
 	return 1;
 }
 
+int ipq_read_tcsr_boot_misc(void)
+{
+	u32 *dmagic = TCSR_BOOT_MISC_REG;
+	return *dmagic;
+}
+
 int apps_iscrashed_crashdump_disabled(void)
 {
-	u32 *dmagic = (u32 *)CONFIG_DEVSOC_DMAGIC_ADDR;
+	u32 *dmagic = TCSR_BOOT_MISC_REG;
 
 	if (*dmagic & DLOAD_DISABLED)
 		return 1;
@@ -663,7 +660,7 @@ int apps_iscrashed_crashdump_disabled(void)
 
 int apps_iscrashed(void)
 {
-	u32 *dmagic = (u32 *)CONFIG_DEVSOC_DMAGIC_ADDR;
+	u32 *dmagic = TCSR_BOOT_MISC_REG;
 
 	if (*dmagic & DLOAD_MAGIC_COOKIE)
 		return 1;
@@ -676,13 +673,17 @@ void reset_crashdump(void)
 	unsigned int ret = 0;
 	unsigned int cookie = 0;
 
-#ifdef CONFIG_IPQ_RUNTIME_FAILSAFE
 	cookie = ipq_read_tcsr_boot_misc();
-	fs_debug("\nFailsafe: %s: Clearing DLOAD and NonHLOS bits\n", __func__);
-	cookie &= ~(DLOAD_BITS);
-	cookie &= ~(IPQ_FS_NONHLOS_BIT);
+#ifdef CONFIG_IPQ_RUNTIME_FAILSAFE
+	if (ipq_runtime_fs_feature_enabled) {
+		fs_debug("\nFailsafe: %s: Clearing DLOAD and NonHLOS bits\n",
+			 __func__);
+		cookie &= ~(DLOAD_BITS);
+		cookie &= ~(IPQ_FS_NONHLOS_BIT);
+	}
 #endif
 	qca_scm_sdi();
+	cookie &= DLOAD_DISABLE;
 	ret = qca_scm_dload(cookie);
 	if (ret)
 		printf ("Error in reseting the Magic cookie\n");
@@ -766,7 +767,7 @@ void set_flash_secondary_type(qca_smem_flash_info_t *smem)
 	return;
 };
 
-#ifdef CONFIG_DEVSOC_EDMA
+#ifdef CONFIG_IPQ5332_EDMA
 int get_mdc_mdio_gpio(int mdc_mdio_gpio[2])
 {
 	int mdc_mdio_gpio_cnt = 2, node;
@@ -904,17 +905,79 @@ void qca808x_phy_reset_init_done(void)
 	}
 }
 
+int get_sfp_gpio(int sfp_gpio[2])
+{
+	int sfp_gpio_cnt = -1, node;
+	int res = -1;
+
+	node = fdt_path_offset(gd->fdt_blob, "/ess-switch");
+	if (node >= 0) {
+		sfp_gpio_cnt = fdtdec_get_uint(gd->fdt_blob, node,
+				"sfp_gpio_cnt", -1);
+		if (sfp_gpio_cnt >= 1) {
+			res = fdtdec_get_int_array(gd->fdt_blob, node,
+							"sfp_gpio",
+							(u32 *)sfp_gpio,
+							sfp_gpio_cnt);
+			if (res >= 0)
+				return sfp_gpio_cnt;
+		}
+	}
+	return res;
+}
+
+void sfp_reset_init(void)
+{
+	int sfp_gpio[2] = {-1, -1}, sfp_gpio_cnt, i;
+	unsigned int *sfp_gpio_base;
+	uint32_t cfg;
+
+	sfp_gpio_cnt = get_sfp_gpio(sfp_gpio);
+	if (sfp_gpio_cnt >= 1) {
+		for (i = 0; i < sfp_gpio_cnt; i++) {
+			if (sfp_gpio[i] >= 0) {
+				sfp_gpio_base =
+					(unsigned int *)GPIO_CONFIG_ADDR(
+								sfp_gpio[i]);
+				cfg = GPIO_OE | GPIO_DRV_8_MA | GPIO_PULL_UP;
+				writel(cfg, sfp_gpio_base);
+			}
+		}
+	}
+}
+
+void qca8081_napa_reset(void)
+{
+	unsigned int *napa_gpio_base;
+	int node, gpio;
+	uint32_t cfg;
+
+	node = fdt_path_offset(gd->fdt_blob, "/ess-switch");
+	if (node >= 0) {
+		gpio = fdtdec_get_uint(gd->fdt_blob, node , "napa_gpio", -1);
+		if (gpio != -1) {
+			napa_gpio_base =
+				(unsigned int *)GPIO_CONFIG_ADDR(gpio);
+			cfg = GPIO_OE | GPIO_DRV_8_MA | GPIO_PULL_UP;
+			writel(cfg, napa_gpio_base);
+			mdelay(100);
+			gpio_set_value(gpio, 0x1);
+		}
+	}
+}
+
 void bring_phy_out_of_reset(void)
 {
+	qca8081_napa_reset();
 	aquantia_phy_reset_init();
 	qca808x_phy_reset_init();
+	sfp_reset_init();
 	mdelay(500);
 	aquantia_phy_reset_init_done();
 	qca808x_phy_reset_init_done();
-	mdelay(500);
 }
 
-void devsoc_eth_initialize(void)
+void ipq5332_eth_initialize(void)
 {
 	eth_clock_init();
 
@@ -927,11 +990,11 @@ int board_eth_init(bd_t *bis)
 {
 	int ret = 0;
 
-	devsoc_eth_initialize();
+	ipq5332_eth_initialize();
 
-	ret = devsoc_edma_init(NULL);
+	ret = ipq5332_edma_init(NULL);
 	if (ret != 0)
-		printf("%s: devsoc_edma_init failed : %d\n", __func__, ret);
+		printf("%s: ipq5332_edma_init failed : %d\n", __func__, ret);
 
 	return ret;
 }
