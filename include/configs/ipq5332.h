@@ -30,6 +30,8 @@
 
 #define CONFIG_SYS_VSNPRINTF
 
+#define QCA_CLOCK_ENABLE
+
 /*
  * Enable Early and Late init
  * This config needs for secondary boot and to set BADOFF5E
