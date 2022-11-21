@@ -610,7 +610,6 @@ int ipq_board_usb_init(void)
 
 	nodeoff = fdt_path_offset(gd->fdt_blob, "usb0");
 	if (nodeoff < 0){
-		printf("USB: Node Not found,skipping initialization\n");
 		return 0;
 	}
 
