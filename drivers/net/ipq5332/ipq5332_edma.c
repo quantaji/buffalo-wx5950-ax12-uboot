@@ -29,6 +29,7 @@
 #include <fdtdec.h>
 #include "ipq5332_edma.h"
 #include "ipq_phy.h"
+#include "ipq_qca8084.h"
 
 DECLARE_GLOBAL_DATA_PTR;
 #ifdef DEBUG
@@ -90,7 +91,15 @@ static int tftp_acl_our_port;
 static int qca8084_swt_enb = 0;
 static int qca8084_chip_detect = 0;
 #endif
+
+#ifdef CONFIG_QCA8084_PHY_MODE
+extern void ipq_qca8084_phy_hw_init(struct phy_ops **ops, u32 phy_addr);
+extern void qca8084_phy_sgmii_mode_set(uint32_t phy_addr, u32 interface_mode);
+#endif /* CONFIG_QCA8084_PHY_MODE */
 #endif
+
+static int qca8084_bypass_enb = 0;
+extern void qca8084_bypass_interface_mode_set(u32 interface_mode);
 
 /*
  * EDMA hardware instance
@@ -927,6 +936,7 @@ static int ipq5332_eth_init(struct eth_device *eth_dev, bd_t *this)
 			continue;
 #ifdef CONFIG_QCA8084_SWT_MODE
 		else if ((qca8084_swt_enb && qca8084_chip_detect) &&
+				(!(qca8084_bypass_enb & i)) &&
 				(phy_info->phy_type == QCA8084_PHY_TYPE)) {
 			if (!ipq_qca8084_link_update(swt_info))
 				linkup++;
@@ -1029,7 +1039,8 @@ static int ipq5332_eth_init(struct eth_device *eth_dev, bd_t *this)
 			clk[1] = 1;
 			clk[2] = 0x418;
 			clk[3] = 1;
-			if (phy_info->phy_type == QCA8081_PHY_TYPE) {
+			if ((phy_info->phy_type == QCA8081_PHY_TYPE) ||
+				(phy_info->phy_type == QCA8084_PHY_TYPE)) {
 				clk[0] = 0x309;
 				clk[1] = 0;
 				clk[2] = 0x409;
@@ -1042,7 +1053,8 @@ static int ipq5332_eth_init(struct eth_device *eth_dev, bd_t *this)
 			clk[1] = 0x0;
 			clk[2] = 0x404;
 			clk[3] = 0x0;
-			if (phy_info->phy_type == QCA8081_PHY_TYPE) {
+			if ((phy_info->phy_type == QCA8081_PHY_TYPE) ||
+				(phy_info->phy_type == QCA8084_PHY_TYPE)) {
 				clk[0] = 0x301;
 				clk[2] = 0x401;
 			}
@@ -1053,8 +1065,9 @@ static int ipq5332_eth_init(struct eth_device *eth_dev, bd_t *this)
 			clk[1] = 0x0;
 			clk[2] = 0x407;
 			clk[3] = 0x0;
-			if (phy_info->phy_type == SFP_PHY_TYPE ||
-				phy_info->phy_type == QCA8081_PHY_TYPE) {
+			if ((phy_info->phy_type == SFP_PHY_TYPE) ||
+				(phy_info->phy_type == QCA8081_PHY_TYPE) ||
+				(phy_info->phy_type == QCA8084_PHY_TYPE)) {
 				clk[0] = 0x301;
 				clk[2] = 0x401;
 			}
@@ -1090,7 +1103,8 @@ static int ipq5332_eth_init(struct eth_device *eth_dev, bd_t *this)
 					curr_speed[i], dp[duplex]);
 		}
 
-		if (phy_info->phy_type == QCA8081_PHY_TYPE) {
+		if ((phy_info->phy_type == QCA8081_PHY_TYPE) ||
+			(phy_info->phy_type == QCA8084_PHY_TYPE)) {
 			ppe_port_bridge_txmac_set(i, 1);
 			ppe_uniphy_mode_set(port_info[i]->uniphy_id,
 						sgmii_mode);
@@ -1115,6 +1129,17 @@ static int ipq5332_eth_init(struct eth_device *eth_dev, bd_t *this)
 				ppe_port_bridge_txmac_set(i, 1);
 				ppe_uniphy_mode_set(port_info[i]->uniphy_id,
 					EPORT_WRAPPER_SGMII_PLUS);
+			}
+		}
+
+		if (phy_info->phy_type == QCA8084_PHY_TYPE) {
+			if (curr_speed[i] == FAL_SPEED_2500) {
+				qca8084_phy_sgmii_mode_set(PORT4,
+						PORT_SGMII_PLUS);
+			}
+			else {
+				qca8084_phy_sgmii_mode_set(PORT4,
+						PHY_SGMII_BASET);
 			}
 		}
 
@@ -1735,6 +1760,8 @@ int ipq5332_edma_init(void *edma_board_cfg)
 #ifndef CONFIG_IPQ5332_RUMI
 	node = fdt_path_offset(gd->fdt_blob, "/ess-switch");
 #ifdef CONFIG_QCA8084_SWT_MODE
+	qca8084_bypass_enb = fdtdec_get_uint(gd->fdt_blob, node,
+				"qca8084_bypass_enable", 0);
 	qca8084_swt_enb = fdtdec_get_uint(gd->fdt_blob, node,
 				"qca8084_switch_enable", 0);
 	if (qca8084_swt_enb) {
@@ -1940,9 +1967,15 @@ int ipq5332_edma_init(void *edma_board_cfg)
 					phy_addr);
 			break;
 #endif
-#ifdef CONFIG_QCA8084_SWT_MODE
+#ifdef CONFIG_QCA8084_PHY
 			case QCA8084_PHY:
 				qca8084_chip_detect = 1;
+				if (qca8084_bypass_enb &&
+						(phy_addr == PORT4)) {
+					ipq_qca8084_phy_hw_init(
+						&ipq5332_edma_dev[i]->ops[phy_id],
+						phy_addr);
+				}
 			break;
 #endif
 #ifdef CONFIG_ATHRS17C_SWITCH
@@ -1990,6 +2023,9 @@ int ipq5332_edma_init(void *edma_board_cfg)
 #ifdef CONFIG_QCA8084_SWT_MODE
 		/** QCA8084 switch specific configurations */
 		if (qca8084_swt_enb && qca8084_chip_detect) {
+
+			if (qca8084_bypass_enb)
+				qca8084_bypass_interface_mode_set(PHY_SGMII_BASET);
 			/*
 			 * Force speed ipq5332 1st port
 			 * for QCA8084 switch mode
