@@ -21,7 +21,6 @@
 #endif
 
 #define CONFIG_IPQ5332
-#define CONFIG_IPQ5332_RUMI
 #undef	CONFIG_QCA_DISABLE_SCM
 #define CONFIG_SPI_FLASH_CYPRESS
 #define CONFIG_SYS_NO_FLASH
@@ -440,5 +439,7 @@ extern loff_t board_env_size;
 #undef CONFIG_BOOTM_PLAN9
 #undef CONFIG_BOOTM_RTEMS
 #undef CONFIG_BOOTM_VXWORKS
+
+#define CONFIG_CMD_IPQ_FLASH_INIT
 
 #endif /* _IPQ5332_H */

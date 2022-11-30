@@ -51,12 +51,12 @@
 		#size-cells = <0>;
 		compatible = "qcom,qpic-nand-v2.1.1";
 		reg = <0x79B0000 0x10000>;
-		status = "disabled";
+		status = "okay";
 	};
 
 	mmc: sdhci@7804000 {
 		compatible = "qcom,sdhci-msm";
-		status = "disabled";
+		status = "okay";
 	};
 
 	pci0: pci@20000000 {

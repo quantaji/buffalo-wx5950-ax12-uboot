@@ -37,6 +37,11 @@
 #endif
 
 #define FLASH_SEL_BIT	7
+#define LINUX_NAND_DTS "/soc/nand@79b0000/"
+#define LINUX_MMC_DTS "/soc/sdhci@7804000/"
+#define STATUS_OK "status%?okay"
+#define STATUS_DISABLED "status%?disabled"
+
 DECLARE_GLOBAL_DATA_PTR;
 
 static int aq_phy_initialised = 0;
@@ -120,23 +125,14 @@ int dump_entries_s = ARRAY_SIZE(dumpinfo_s);
 
 void fdt_fixup_flash(void *blob)
 {
-	int node_off, ret;
-	char *flash = "/soc/nand@79b0000";
+	uint32_t flash_type = SMEM_BOOT_NO_FLASH;
 
-	if (gd->bd->bi_arch_number == MACH_TYPE_IPQ5332_EMULATION)
-		return;
+	get_current_flash_type(&flash_type);
+	if (flash_type == SMEM_BOOT_NORPLUSEMMC ||
+		flash_type == SMEM_BOOT_MMC_FLASH ) {
+		parse_fdt_fixup(LINUX_NAND_DTS"%"STATUS_DISABLED, blob);
+		parse_fdt_fixup(LINUX_MMC_DTS"%"STATUS_OK, blob);
 
-	node_off = fdt_path_offset(gd->fdt_blob, "nand");
-	if (!fdtdec_get_is_enabled(gd->fdt_blob, node_off))
-		flash = "/soc/sdhci@7804000";
-
-	node_off = fdt_path_offset(blob, flash);
-	if (node_off >= 0) {
-		ret = fdt_setprop_string(blob, node_off, "status", "okay");
-		if (ret < 0)
-			printf("Unable to set status of %s\n", flash);
-	} else {
-		printf("%s: unable to find node %d\n", __func__, node_off);
 	}
 	return;
 }
@@ -154,17 +150,32 @@ void ipq_uboot_fdt_fixup(void)
 	/* fix peripherals required for basic board bring up
 	 * like flash etc.
 	 */
-	flash = ((machid >> FLASH_SEL_BIT) & 0x1) ? "mmc" : "nand";
+	/* This becomes obsolete as nand or emmc will be
+	 * initialized based on the boot type. Below code
+	 * will be removed later
+	 */
 
-	node = fdt_path_offset(gd->fdt_blob, flash);
-	if (node >= 0) {
-		ret = fdt_setprop_string(blob, node, "status", "okay");
-		if (ret < 0 && ret != -FDT_ERR_NOSPACE)
-			printf("Unable to set status of %s\n", flash);
-	} else {
-		printf("%s node not available\n", flash);
+	if ((machid >> FLASH_SEL_BIT) & 0x1) {
+		flash = "mmc";
+		node = fdt_path_offset(gd->fdt_blob, flash);
+		if (node >= 0) {
+			ret = fdt_setprop_string(blob, node, "status", "okay");
+			if (ret < 0 && ret != -FDT_ERR_NOSPACE)
+				printf("Unable to set status of %s\n", flash);
+		} else {
+			printf("%s node not available\n", flash);
+		}
+
+		flash = "nand";
+		node = fdt_path_offset(gd->fdt_blob, flash);
+		if (node >= 0) {
+			ret = fdt_setprop_string(blob, node, "status", "disabled");
+			if (ret < 0 && ret != -FDT_ERR_NOSPACE)
+				printf("Unable to set status of %s\n", flash);
+		} else {
+			printf("%s node not available\n", flash);
+		}
 	}
-
 	return;
 }
 
@@ -274,11 +285,10 @@ __weak void board_mmc_deinit(void)
 	return;
 }
 
-int board_mmc_init(bd_t *bis)
+int do_mmc_init(void)
 {
 	int node, gpio_node;
-	int ret = 0;
-	qca_smem_flash_info_t *sfi = &qca_smem_flash_info;
+
 	node = fdt_path_offset(gd->fdt_blob, "mmc");
 	if (node < 0) {
 		printf("sdhci: Node Not found, skipping initialization\n");
@@ -287,7 +297,7 @@ int board_mmc_init(bd_t *bis)
 
 	if (!fdtdec_get_is_enabled(gd->fdt_blob, node)) {
 		printf("MMC: disabled, skipping initialization\n");
-		return ret;
+		return -1;
 	}
 
 	gpio_node = fdt_subnode_offset(gd->fdt_blob, node, "mmc_gpio");
@@ -308,6 +318,26 @@ int board_mmc_init(bd_t *bis)
 		printf("add_sdhci fail!\n");
 		return -1;
 	}
+
+	return 0;
+}
+
+int board_mmc_init(bd_t *bis)
+{
+	int ret = 0;
+	uint32_t flash_type = SMEM_BOOT_NO_FLASH;
+	qca_smem_flash_info_t *sfi = &qca_smem_flash_info;
+	char *name = NULL;
+#ifdef CONFIG_QPIC_SERIAL
+	name = nand_info[CONFIG_NAND_FLASH_INFO_IDX].name;
+#endif
+
+	get_current_flash_type(&flash_type);
+
+	if (flash_type != SMEM_BOOT_NORPLUSNAND &&
+		flash_type !=  SMEM_BOOT_QSPI_NAND_FLASH &&
+		!name)
+		ret = do_mmc_init();
 
 	if (!ret && sfi->flash_type == SMEM_BOOT_MMC_FLASH) {
 		ret = board_mmc_env_init(mmc_host);
@@ -529,25 +559,23 @@ static void usb_init_hsphy(void __iomem *phybase, int ssphy)
 	writel(FREQ_SEL, phybase + USB_PHY_FSEL_SEL);
 	/* Configure refclk frequency */
 
-	writel(FSEL_VALUE << FSEL, phybase + USB_PHY_HS_PHY_CTRL_COMMON0);
+	writel(COMMONONN | FSEL_VALUE | RETENABLEN,
+			phybase + USB_PHY_HS_PHY_CTRL_COMMON0);
 
-	writel(readl(phybase + USB_PHY_UTMI_CTRL5) & ATERESET,
+	writel(POR_EN & ATERESET,
 		phybase + USB_PHY_UTMI_CTRL5);
 
-	writel(USB2_SUSPEND_N_SEL | USB2_SUSPEND_N,
+	writel(USB2_SUSPEND_N_SEL | USB2_SUSPEND_N | USB2_UTMI_CLK_EN,
 			phybase + USB_PHY_HS_PHY_CTRL2);
 
-	writel(SLEEPM, phybase + USB_PHY_UTMI_CTRL0);
-
-	writel(XCFG_COARSE_TUNE_NUM | XCFG_COARSE_TUNE_NUM,
+	writel(XCFG_COARSE_TUNE_NUM | XCFG_FINE_TUNE_NUM,
 		phybase + USB2PHY_USB_PHY_M31_XCFGI_11);
 
-	udelay(100);
+	udelay(10);
 
-	writel(readl(phybase + USB_PHY_UTMI_CTRL5) & ~POR_EN,
-		phybase + USB_PHY_UTMI_CTRL5);
+	writel(0, phybase + USB_PHY_UTMI_CTRL5);
 
-	writel(readl(phybase + USB_PHY_HS_PHY_CTRL2) & USB2_SUSPEND_N_SEL,
+	writel(USB2_SUSPEND_N | USB2_UTMI_CLK_EN,
 		phybase + USB_PHY_HS_PHY_CTRL2);
 }
 
@@ -701,21 +729,34 @@ void reset_cpu(unsigned long a)
 	while(1);
 }
 
-void board_nand_init(void)
-{
 #ifdef CONFIG_QPIC_SERIAL
+void do_nand_init(void)
+{
 	/* check for nand node in dts
 	 * if nand node in dts is disabled then
 	 * simply return from here without
 	 * initializing
 	 */
 	int node;
+
 	node = fdt_path_offset(gd->fdt_blob, "/nand-controller");
 	if (!fdtdec_get_is_enabled(gd->fdt_blob, node)) {
 		printf("QPIC: disabled, skipping initialization\n");
 	} else {
 		qpic_nand_init(NULL);
 	}
+}
+#endif
+
+void board_nand_init(void)
+{
+#ifdef CONFIG_QPIC_SERIAL
+	uint32_t flash_type = SMEM_BOOT_NO_FLASH;
+
+	get_current_flash_type(&flash_type);
+	if (flash_type != SMEM_BOOT_NORPLUSEMMC &&
+		flash_type != SMEM_BOOT_MMC_FLASH)
+		do_nand_init();
 #endif
 #ifdef CONFIG_QCA_SPI
 	int gpio_node;

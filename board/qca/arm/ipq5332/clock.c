@@ -94,9 +94,14 @@ void emmc_clock_init(void)
 	writel(cfg, GCC_SDCC1_APPS_CFG_RCGR);
 	/*
 	 * Mode is dual edge,
-	 * For 192Mhz doesn't require MND value
+	 * For 192Mhz, MND need to be set to zero
 	 * 1152 / 6 = 192
 	 */
+
+	writel(0, GCC_SDCC1_APPS_M);
+	writel(0, GCC_SDCC1_APPS_N);
+	writel(0, GCC_SDCC1_APPS_D);
+
 	writel(CMD_UPDATE, GCC_SDCC1_APPS_CMD_RCGR);
 	mdelay(10);
 	writel(ROOT_EN, GCC_SDCC1_APPS_CMD_RCGR);
@@ -131,9 +136,9 @@ void pcie_v2_clock_init(int pcie_id)
 			GCC_PCIE_AUX_CFG_RCGR_SRC_SEL |
 			GCC_PCIE_AUX_CFG_RCGR_SRC_DIV);
 		writel(cfg, GCC_PCIE_AUX_CFG_RCGR);
-		writel(0x1, GCC_PCIE_AUX_M);
-		writel(0xFFE7, GCC_PCIE_AUX_N);
-		writel(0xFFE6, GCC_PCIE_AUX_D);
+		writel(0, GCC_PCIE_AUX_M);
+		writel(0, GCC_PCIE_AUX_N);
+		writel(0, GCC_PCIE_AUX_D);
 		writel(CMD_UPDATE, GCC_PCIE_AUX_CMD_RCGR);
 		mdelay(10);
 		writel(ROOT_EN, GCC_PCIE_AUX_CMD_RCGR);
@@ -272,7 +277,7 @@ void usb_clock_init(void)
 	writel(ROOT_EN, GCC_USB0_MASTER_CMD_RCGR);
 
 	/* Configure usb0_mock_utmi_clk_src */
-	cfg = (GCC_USB_MOCK_UTMI_SRC_SEL |
+	cfg = (GCC_USB_MOCK_UTMI_MN_MODE | GCC_USB_MOCK_UTMI_SRC_SEL |
 		GCC_USB_MOCK_UTMI_SRC_DIV);
 	writel(cfg, GCC_USB0_MOCK_UTMI_CFG_RCGR);
 	writel(MOCK_UTMI_M, GCC_USB0_MOCK_UTMI_M);
@@ -537,6 +542,8 @@ void fixed_clock_init(void)
 	fixed_nss_csr_clock_init();
 
 	fixed_sys_clock_init();
+
+	fixed_uniphy_clock_init();
 
 	port_mac_clock_init();
 
