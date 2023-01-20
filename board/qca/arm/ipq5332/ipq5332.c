@@ -24,6 +24,8 @@
 #include <asm/arch-qca-common/scm.h>
 #include <asm/arch-qca-common/iomap.h>
 #include <ipq5332.h>
+#include <spi.h>
+#include <spi_flash.h>
 #ifdef CONFIG_QPIC_NAND
 #include <asm/arch-qca-common/qpic_nand.h>
 #include <nand.h>
@@ -37,6 +39,15 @@
 #endif
 
 #define FLASH_SEL_BIT	7
+#define LINUX_NAND_DTS "/soc/nand@79b0000/"
+#define LINUX_MMC_DTS "/soc/sdhci@7804000/"
+#define STATUS_OK "status%?okay"
+#define STATUS_DISABLED "status%?disabled"
+
+#define NSS_CC_PPE_BCR			0x39B003E4
+#define GCC_UNIPHY0_BCR			0x1816000
+#define GCC_UNIPHY1_BCR			0x1816014
+
 DECLARE_GLOBAL_DATA_PTR;
 
 static int aq_phy_initialised = 0;
@@ -120,51 +131,15 @@ int dump_entries_s = ARRAY_SIZE(dumpinfo_s);
 
 void fdt_fixup_flash(void *blob)
 {
-	int node_off, ret;
-	char *flash = "/soc/nand@79b0000";
+	uint32_t flash_type = SMEM_BOOT_NO_FLASH;
 
-	if (gd->bd->bi_arch_number == MACH_TYPE_IPQ5332_EMULATION)
-		return;
+	get_current_flash_type(&flash_type);
+	if (flash_type == SMEM_BOOT_NORPLUSEMMC ||
+		flash_type == SMEM_BOOT_MMC_FLASH ) {
+		parse_fdt_fixup(LINUX_NAND_DTS"%"STATUS_DISABLED, blob);
+		parse_fdt_fixup(LINUX_MMC_DTS"%"STATUS_OK, blob);
 
-	node_off = fdt_path_offset(gd->fdt_blob, "nand");
-	if (!fdtdec_get_is_enabled(gd->fdt_blob, node_off))
-		flash = "/soc/sdhci@7804000";
-
-	node_off = fdt_path_offset(blob, flash);
-	if (node_off >= 0) {
-		ret = fdt_setprop_string(blob, node_off, "status", "okay");
-		if (ret < 0)
-			printf("Unable to set status of %s\n", flash);
-	} else {
-		printf("%s: unable to find node %d\n", __func__, node_off);
 	}
-	return;
-}
-
-void ipq_uboot_fdt_fixup(void)
-{
-	int node, ret = 0;
-	char *flash;
-	void *blob = (void *)gd->fdt_blob;
-	ulong machid = gd->bd->bi_arch_number;
-
-	if (machid == MACH_TYPE_IPQ5332_EMULATION)
-		return;
-
-	/* fix peripherals required for basic board bring up
-	 * like flash etc.
-	 */
-	flash = ((machid >> FLASH_SEL_BIT) & 0x1) ? "mmc" : "nand";
-
-	node = fdt_path_offset(gd->fdt_blob, flash);
-	if (node >= 0) {
-		ret = fdt_setprop_string(blob, node, "status", "okay");
-		if (ret < 0 && ret != -FDT_ERR_NOSPACE)
-			printf("Unable to set status of %s\n", flash);
-	} else {
-		printf("%s node not available\n", flash);
-	}
-
 	return;
 }
 
@@ -274,11 +249,10 @@ __weak void board_mmc_deinit(void)
 	return;
 }
 
-int board_mmc_init(bd_t *bis)
+int do_mmc_init(void)
 {
 	int node, gpio_node;
-	int ret = 0;
-	qca_smem_flash_info_t *sfi = &qca_smem_flash_info;
+
 	node = fdt_path_offset(gd->fdt_blob, "mmc");
 	if (node < 0) {
 		printf("sdhci: Node Not found, skipping initialization\n");
@@ -287,7 +261,7 @@ int board_mmc_init(bd_t *bis)
 
 	if (!fdtdec_get_is_enabled(gd->fdt_blob, node)) {
 		printf("MMC: disabled, skipping initialization\n");
-		return ret;
+		return -1;
 	}
 
 	gpio_node = fdt_subnode_offset(gd->fdt_blob, node, "mmc_gpio");
@@ -308,6 +282,26 @@ int board_mmc_init(bd_t *bis)
 		printf("add_sdhci fail!\n");
 		return -1;
 	}
+
+	return 0;
+}
+
+int board_mmc_init(bd_t *bis)
+{
+	int ret = 0;
+	uint32_t flash_type = SMEM_BOOT_NO_FLASH;
+	qca_smem_flash_info_t *sfi = &qca_smem_flash_info;
+	char *name = NULL;
+#ifdef CONFIG_QPIC_SERIAL
+	name = nand_info[CONFIG_NAND_FLASH_INFO_IDX].name;
+#endif
+
+	get_current_flash_type(&flash_type);
+
+	if (flash_type != SMEM_BOOT_NORPLUSNAND &&
+		flash_type !=  SMEM_BOOT_QSPI_NAND_FLASH &&
+		!name)
+		ret = do_mmc_init();
 
 	if (!ret && sfi->flash_type == SMEM_BOOT_MMC_FLASH) {
 		ret = board_mmc_env_init(mmc_host);
@@ -475,6 +469,199 @@ void board_pci_deinit()
 	return;
 }
 #endif
+
+ /*
+  * Gets the Caldata from the ART partition table and return the value
+  */
+int get_eth_caldata(u32 *caldata, u32 offset)
+{
+	s32 ret = 0 ;
+	u32 flash_type=0u;
+	u32 start_blocks;
+	u32 size_blocks;
+	u32 art_offset=0U ;
+	u32 length = 4;
+	qca_smem_flash_info_t *sfi = &qca_smem_flash_info;
+
+	struct spi_flash *flash = NULL;
+
+#if defined(CONFIG_ART_COMPRESSED) && (defined(CONFIG_GZIP) || defined(CONFIG_LZMA))
+	void *load_buf, *image_buf;
+	unsigned long img_size;
+	unsigned long desMaxSize;
+#endif
+
+#ifdef CONFIG_QCA_MMC
+	block_dev_desc_t *blk_dev;
+	disk_partition_t disk_info;
+	struct mmc *mmc;
+	char mmc_blks[512];
+#endif
+
+	if ((sfi->flash_type == SMEM_BOOT_SPI_FLASH) ||
+		(sfi->flash_type == SMEM_BOOT_NOR_FLASH) ||
+		(sfi->flash_type == SMEM_BOOT_NORPLUSNAND) ||
+		(sfi->flash_type == SMEM_BOOT_NORPLUSEMMC))
+	{
+		ret = smem_getpart("0:ART", &start_blocks, &size_blocks);
+		if (ret < 0) {
+			printf("No ART partition found\n");
+			return ret;
+		}
+
+		/*
+		* ART partition 0th position.
+		*/
+		art_offset = (u32)((u32) qca_smem_flash_info.flash_block_size * start_blocks);
+
+#ifndef CONFIG_ART_COMPRESSED
+		art_offset = (art_offset + offset);
+#endif
+
+		flash = spi_flash_probe(CONFIG_SF_DEFAULT_BUS, CONFIG_SF_DEFAULT_CS,
+				CONFIG_SF_DEFAULT_SPEED, CONFIG_SF_DEFAULT_MODE);
+
+
+		if (flash == NULL){
+			printf("No SPI flash device found\n");
+			ret = -1;
+		} else {
+#if defined(CONFIG_ART_COMPRESSED) && defined(CONFIG_LZMA)
+		image_buf = map_sysmem(CONFIG_COMPRESSED_LOAD_ADDR, 0);
+		load_buf = map_sysmem(CONFIG_COMPRESSED_LOAD_ADDR + 0x100000, 0);
+		img_size = qca_smem_flash_info.flash_block_size * size_blocks;
+		desMaxSize = 0x100000;
+		ret = spi_flash_read(flash, art_offset, img_size, image_buf);
+		if (ret == 0) {
+			ret = -1;
+#ifdef CONFIG_LZMA
+			if (ret != 0){
+
+			ret = lzmaBuffToBuffDecompress(load_buf,
+				(SizeT *)&desMaxSize,
+				image_buf,
+				(SizeT)img_size);
+			}
+#endif
+			if((!ret) && (memcpy(caldata, load_buf + offset , length))){}
+			else {
+				printf("Invalid compression type..\n");
+				ret = -1;
+			}
+		}
+#else
+			ret = spi_flash_read(flash, art_offset, length, caldata);
+#endif
+		}
+
+		if (ret < 0)
+			printf("ART partition read failed..\n");
+	}
+#ifdef CONFIG_QPIC_NAND
+	else if ((sfi->flash_type == SMEM_BOOT_NAND_FLASH ) || (sfi->flash_type == SMEM_BOOT_QSPI_NAND_FLASH))
+	{
+		if (qca_smem_flash_info.flash_type == SMEM_BOOT_SPI_FLASH)
+			flash_type = CONFIG_SPI_FLASH_INFO_IDX;
+		else{
+			flash_type = CONFIG_NAND_FLASH_INFO_IDX;
+		}
+
+		ret = smem_getpart("0:ART", &start_blocks, &size_blocks);
+		if (ret < 0) {
+			printf("No ART partition found\n");
+			return ret;
+		}
+
+		/*
+		* ART partition 0th position.
+		*/
+		art_offset = (u32)((u32) qca_smem_flash_info.flash_block_size * start_blocks);
+		art_offset = /*(loff_t)*/(art_offset + offset);
+
+		ret = nand_read(&nand_info[flash_type],art_offset, &length,(u_char*) caldata);
+
+		if (ret < 0)
+		printf("ART partition read failed..\n");
+	}
+#endif
+	else{
+#ifdef CONFIG_QCA_MMC
+		blk_dev = mmc_get_dev(mmc_host.dev_num);
+		ret = get_partition_info_efi_by_name(blk_dev, "0:ART", &disk_info);
+		/*
+		* ART partition 0th position will contain MAC address.
+		* Read 1 block.
+		*/
+		if (ret == 0) {
+			mmc = mmc_host.mmc;
+			ret = mmc->block_dev.block_read
+				(mmc_host.dev_num, (disk_info.start+(offset/512)),
+						1, mmc_blks);
+			memcpy(caldata, (mmc_blks+(offset%512)), length);
+		}
+		if (ret < 0)
+			printf("ART partition read failed..\n");
+#endif
+	}
+
+	/*
+	*  Avoid unused warning
+	*  */
+	(void)flash_type;
+
+	return ret;
+
+}
+
+void board_update_caldata(void)
+{
+	u32 reg_val=0u;
+	s32 ret = 0 ;
+	u32 u32_calDataOffset = 0U;
+	u32 u32_calData = 0u;
+	u32 u32_CDACIN =0U, u32_CDACOUT = 0u;
+	int node_off,slotId;
+
+	node_off = fdt_path_offset(gd->fdt_blob, "/slot_Id");
+	if (node_off < 0) {
+		printf("Default CapIn/CapOut values used\n");
+		return;
+         }
+
+	slotId = fdtdec_get_uint(gd->fdt_blob,node_off, "slotId", 0);
+
+	u32_calDataOffset  = (u32)(((slotId*150)+4)*1024 + 0x66c4);
+	ret = get_eth_caldata(&u32_calData,u32_calDataOffset);
+	if (ret < 0)
+		return;
+
+	u32_CDACIN = u32_calData & 0x3FF;
+	u32_CDACOUT = (u32_calData >> 16) & 0x1FFu;
+
+	if(((u32_CDACIN == 0x0u) || (u32_CDACIN == 0x3FFu)) && ((u32_CDACOUT == 0x0u) || (u32_CDACOUT == 0x1FFu)))
+	{
+		u32_CDACIN = 0x230;
+		u32_CDACOUT = 0xB0;
+	}
+	u32_CDACIN = u32_CDACIN<<22u;
+	u32_CDACOUT = u32_CDACOUT<<13u;
+
+	qca_scm_call_read(0x2, 0x22, (u32 *)PHYA0_RFA_RFA_RFA_OTP_OTP_OV_1,&reg_val);
+	reg_val = (reg_val & 0xFFF9FFFF) | (0x3 << 17u);
+	qca_scm_call_write(0x2, 0x23,(u32 *)PHYA0_RFA_RFA_RFA_OTP_OTP_OV_1, reg_val);
+
+	qca_scm_call_read(0x2, 0x22, (u32 *)PHYA0_RFA_RFA_RFA_OTP_OTP_XO_0,&reg_val);
+
+	if((u32_CDACIN == (reg_val & (0x3FF<<22u))) && (u32_CDACOUT == (reg_val & (0x1FF<<13u))))
+	{
+		printf("ART data same as PHYA0_RFA_RFA_RFA_OTP_OTP_XO_0\n");
+		return;
+	}
+
+	reg_val = ((reg_val&0x00001FFF) | ((u32_CDACIN | u32_CDACOUT)&(~0x00001FFF)));
+	qca_scm_call_write(0x2, 0x23,(u32 *)PHYA0_RFA_RFA_RFA_OTP_OTP_XO_0, reg_val);
+}
+
 #ifdef CONFIG_USB_XHCI_IPQ
 void board_usb_deinit(int id)
 {
@@ -529,25 +716,23 @@ static void usb_init_hsphy(void __iomem *phybase, int ssphy)
 	writel(FREQ_SEL, phybase + USB_PHY_FSEL_SEL);
 	/* Configure refclk frequency */
 
-	writel(FSEL_VALUE << FSEL, phybase + USB_PHY_HS_PHY_CTRL_COMMON0);
+	writel(COMMONONN | FSEL_VALUE | RETENABLEN,
+			phybase + USB_PHY_HS_PHY_CTRL_COMMON0);
 
-	writel(readl(phybase + USB_PHY_UTMI_CTRL5) & ATERESET,
+	writel(POR_EN & ATERESET,
 		phybase + USB_PHY_UTMI_CTRL5);
 
-	writel(USB2_SUSPEND_N_SEL | USB2_SUSPEND_N,
+	writel(USB2_SUSPEND_N_SEL | USB2_SUSPEND_N | USB2_UTMI_CLK_EN,
 			phybase + USB_PHY_HS_PHY_CTRL2);
 
-	writel(SLEEPM, phybase + USB_PHY_UTMI_CTRL0);
-
-	writel(XCFG_COARSE_TUNE_NUM | XCFG_COARSE_TUNE_NUM,
+	writel(XCFG_COARSE_TUNE_NUM | XCFG_FINE_TUNE_NUM,
 		phybase + USB2PHY_USB_PHY_M31_XCFGI_11);
 
-	udelay(100);
+	udelay(10);
 
-	writel(readl(phybase + USB_PHY_UTMI_CTRL5) & ~POR_EN,
-		phybase + USB_PHY_UTMI_CTRL5);
+	writel(0, phybase + USB_PHY_UTMI_CTRL5);
 
-	writel(readl(phybase + USB_PHY_HS_PHY_CTRL2) & USB2_SUSPEND_N_SEL,
+	writel(USB2_SUSPEND_N | USB2_UTMI_CLK_EN,
 		phybase + USB_PHY_HS_PHY_CTRL2);
 }
 
@@ -556,14 +741,6 @@ static void usb_init_ssphy(void __iomem *phybase)
 	writel(CLK_ENABLE, GCC_USB0_PHY_CFG_AHB_CBCR);
 	writel(CLK_ENABLE, GCC_USB0_PIPE_CBCR);
 	udelay(100);
-	/*set frequency initial value*/
-	writel(0x1cb9, phybase + SSCG_CTRL_REG_4);
-	writel(0x023a, phybase + SSCG_CTRL_REG_5);
-	/*set spectrum spread count*/
-	writel(0xd360, phybase + SSCG_CTRL_REG_3);
-	/*set fstep*/
-	writel(0x1, phybase + SSCG_CTRL_REG_1);
-	writel(0xeb, phybase + SSCG_CTRL_REG_2);
 	return;
 }
 
@@ -624,18 +801,6 @@ int ipq_board_usb_init(void)
 	return 0;
 }
 #endif
-
-unsigned int get_dts_machid(unsigned int machid)
-{
-	/* By default nand flash enabled, so flash
-	 * selection bit in mach id in dts is zero.
-	 * For emmc flash this bit will be setted,
-	 * so clear this bit to make machid similar
-	 * to dts mach id.
-	 */
-	machid &= ~(1 << FLASH_SEL_BIT);
-	return machid;
-}
 
 __weak int ipq_get_tz_version(char *version_name, int buf_size)
 {
@@ -701,21 +866,34 @@ void reset_cpu(unsigned long a)
 	while(1);
 }
 
-void board_nand_init(void)
-{
 #ifdef CONFIG_QPIC_SERIAL
+void do_nand_init(void)
+{
 	/* check for nand node in dts
 	 * if nand node in dts is disabled then
 	 * simply return from here without
 	 * initializing
 	 */
 	int node;
+
 	node = fdt_path_offset(gd->fdt_blob, "/nand-controller");
 	if (!fdtdec_get_is_enabled(gd->fdt_blob, node)) {
 		printf("QPIC: disabled, skipping initialization\n");
 	} else {
 		qpic_nand_init(NULL);
 	}
+}
+#endif
+
+void board_nand_init(void)
+{
+#ifdef CONFIG_QPIC_SERIAL
+	uint32_t flash_type = SMEM_BOOT_NO_FLASH;
+
+	get_current_flash_type(&flash_type);
+	if (flash_type != SMEM_BOOT_NORPLUSEMMC &&
+		flash_type != SMEM_BOOT_MMC_FLASH)
+		do_nand_init();
 #endif
 #ifdef CONFIG_QCA_SPI
 	int gpio_node;
@@ -760,42 +938,15 @@ void set_flash_secondary_type(qca_smem_flash_info_t *smem)
 };
 
 #ifdef CONFIG_IPQ5332_EDMA
-int get_mdc_mdio_gpio(int mdc_mdio_gpio[2])
-{
-	int mdc_mdio_gpio_cnt = 2, node;
-	int res = -1;
-	node = fdt_path_offset(gd->fdt_blob, "/ess-switch");
-	if (node >= 0) {
-		res = fdtdec_get_int_array(gd->fdt_blob, node, "mdc_mdio_gpio",
-					   (u32 *)mdc_mdio_gpio, mdc_mdio_gpio_cnt);
-		if (res >= 0)
-			return mdc_mdio_gpio_cnt;
-	}
-
-	return res;
-}
-
 void set_function_select_as_mdc_mdio(void)
 {
-	int mdc_mdio_gpio[2] = {-1, -1}, mdc_mdio_gpio_cnt, i;
-	unsigned int *mdc_mdio_gpio_base;
-	uint32_t cfg;
+	int gpio_node;
 
-	mdc_mdio_gpio_cnt = get_mdc_mdio_gpio(mdc_mdio_gpio);
-	if (mdc_mdio_gpio_cnt >= 1) {
-		for (i = 0; i < mdc_mdio_gpio_cnt; i++) {
-			if (mdc_mdio_gpio[i] >=0) {
-				mdc_mdio_gpio_base = (unsigned int *)GPIO_CONFIG_ADDR(mdc_mdio_gpio[i]);
-				if (i == 0) {
-					cfg = GPIO_DRV_8_MA | MDC_MDIO_FUNC_SEL | GPIO_NO_PULL;
-					writel(cfg, mdc_mdio_gpio_base);
-				} else {
-					cfg = GPIO_DRV_8_MA | MDC_MDIO_FUNC_SEL | GPIO_PULL_UP;
-					writel(cfg, mdc_mdio_gpio_base);
-				}
-			}
-		}
-	}
+	gpio_node = fdt_path_offset(gd->fdt_blob, "/ess-switch/mdio_gpio");
+	if (gpio_node >= 0)
+		qca_gpio_init(gpio_node);
+	else
+		printf("mdio gpio not detect \n");
 }
 
 int get_aquantia_gpio(int aquantia_gpio[2])
@@ -836,6 +987,27 @@ int get_qca808x_gpio(int qca808x_gpio[2])
 	return res;
 }
 
+int get_qca8033_gpio(int qca8033_gpio[2])
+{
+	int qca8033_gpio_cnt = -1, node;
+	int res = -1;
+
+	node = fdt_path_offset(gd->fdt_blob, "/ess-switch");
+	if (node >= 0) {
+		qca8033_gpio_cnt =
+			fdtdec_get_uint(gd->fdt_blob, node,
+				"qca8033_gpio_cnt", -1);
+		if (qca8033_gpio_cnt >= 1) {
+			res = fdtdec_get_int_array(gd->fdt_blob, node,
+				"qca8033_gpio", (u32 *)qca8033_gpio,
+				qca8033_gpio_cnt);
+			if (res >= 0)
+				return qca8033_gpio_cnt;
+		}
+	}
+
+	return res;
+}
 void aquantia_phy_reset_init(void)
 {
 	int aquantia_gpio[2] = {-1, -1}, aquantia_gpio_cnt, i;
@@ -848,8 +1020,9 @@ void aquantia_phy_reset_init(void)
 			for (i = 0; i < aquantia_gpio_cnt; i++) {
 				if (aquantia_gpio[i] >= 0) {
 					aquantia_gpio_base = (unsigned int *)GPIO_CONFIG_ADDR(aquantia_gpio[i]);
-					cfg = GPIO_OE | GPIO_DRV_8_MA | GPIO_PULL_UP;
+					cfg = GPIO_OE | GPIO_DRV_2_MA | GPIO_PULL_UP;
 					writel(cfg, aquantia_gpio_base);
+					writel(0x0, GPIO_IN_OUT_ADDR(aquantia_gpio[i]));
 				}
 			}
 		}
@@ -870,6 +1043,7 @@ void qca808x_phy_reset_init(void)
 				qca808x_gpio_base = (unsigned int *)GPIO_CONFIG_ADDR(qca808x_gpio[i]);
 				cfg = GPIO_OE | GPIO_DRV_8_MA | GPIO_PULL_UP;
 				writel(cfg, qca808x_gpio_base);
+				gpio_set_value(qca808x_gpio[i], 0x0);
 			}
 		}
 	}
@@ -883,6 +1057,8 @@ void aquantia_phy_reset_init_done(void)
 	if (aquantia_gpio_cnt >= 1) {
 		for (i = 0; i < aquantia_gpio_cnt; i++)
 			gpio_set_value(aquantia_gpio[i], 0x1);
+			writel(0x3, GPIO_IN_OUT_ADDR(aquantia_gpio[i]));
+			mdelay(500);
 	}
 }
 
@@ -958,6 +1134,29 @@ void qca8081_napa_reset(void)
 	}
 }
 
+void qca8033_phy_reset(void)
+{
+	int qca8033_gpio[2] = {-1, -1}, qca8033_gpio_cnt, i;
+	unsigned int *qca8033_gpio_base;
+	uint32_t cfg;
+
+	qca8033_gpio_cnt = get_qca8033_gpio(qca8033_gpio);
+	if (qca8033_gpio_cnt >= 1) {
+		for (i = 0; i < qca8033_gpio_cnt; i++) {
+			if (qca8033_gpio[i] >= 0) {
+				qca8033_gpio_base =
+					(unsigned int *)GPIO_CONFIG_ADDR(
+					qca8033_gpio[i]);
+				cfg = GPIO_OE | GPIO_DRV_2_MA | GPIO_PULL_UP;
+				writel(cfg, qca8033_gpio_base);
+				writel(0x0, GPIO_IN_OUT_ADDR(qca8033_gpio[i]));
+				mdelay(100);
+				writel(0x3, GPIO_IN_OUT_ADDR(qca8033_gpio[i]));
+			}
+		}
+	}
+}
+
 void bring_phy_out_of_reset(void)
 {
 	qca8081_napa_reset();
@@ -982,12 +1181,16 @@ int board_eth_init(bd_t *bis)
 {
 	int ret = 0;
 
+	set_mdelay_clearbits_le32(NSS_CC_PPE_BCR, 0x1, 100);
+	set_mdelay_clearbits_le32(GCC_UNIPHY0_BCR, 0x1, 10);
+	set_mdelay_clearbits_le32(GCC_UNIPHY1_BCR, 0x1, 10);
+
 	ipq5332_eth_initialize();
 
 	ret = ipq5332_edma_init(NULL);
 	if (ret != 0)
 		printf("%s: ipq5332_edma_init failed : %d\n", __func__, ret);
-
+	board_update_caldata();
 	return ret;
 }
 #endif

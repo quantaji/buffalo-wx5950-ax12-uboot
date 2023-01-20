@@ -21,7 +21,6 @@
 #endif
 
 #define CONFIG_IPQ5332
-#define CONFIG_IPQ5332_RUMI
 #undef	CONFIG_QCA_DISABLE_SCM
 #define CONFIG_SPI_FLASH_CYPRESS
 #define CONFIG_SYS_NO_FLASH
@@ -158,9 +157,9 @@ extern loff_t board_env_size;
 #define CONFIG_ENV_OFFSET			board_env_offset
 #define CONFIG_ENV_SIZE				CONFIG_ENV_SIZE_MAX
 #define CONFIG_ENV_RANGE			board_env_range
-#define CONFIG_SYS_MALLOC_LEN			(CONFIG_ENV_SIZE_MAX + (500 << 10))
+#define CONFIG_SYS_MALLOC_LEN		(CONFIG_ENV_SIZE_MAX + (768 << 10))
 
-#define CONFIG_IPQ_NO_MACS			1
+#define CONFIG_IPQ_NO_MACS			2
 
 /*
  * Block Device & Disk  Partition Config
@@ -243,6 +242,8 @@ extern loff_t board_env_size;
 #define CONFIG_CMD_TFTPPUT
 #define CONFIG_IPQ_MDIO			1
 #define CONFIG_IPQ_ETH_INIT_DEFER
+/* MDIO clock update for AQ firmware downlaod */
+#define MDIO_IO_CLK_315M
 #endif
 
 /* L1 cache line size is 64 bytes, L2 cache line size is 128 bytes
@@ -440,5 +441,14 @@ extern loff_t board_env_size;
 #undef CONFIG_BOOTM_PLAN9
 #undef CONFIG_BOOTM_RTEMS
 #undef CONFIG_BOOTM_VXWORKS
+
+#define CONFIG_CMD_IPQ_FLASH_INIT
+
+/* Enable DTB compress */
+#define CONFIG_COMPRESSED_DTB_MAX_SIZE		0x40000
+#define CONFIG_COMPRESSED_DTB_BASE		CONFIG_SYS_TEXT_BASE -\
+						CONFIG_COMPRESSED_DTB_MAX_SIZE
+/* Flash Protect */
+#define CONFIG_FLASH_PROTECT
 
 #endif /* _IPQ5332_H */

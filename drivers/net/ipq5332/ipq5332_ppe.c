@@ -21,9 +21,7 @@
 #include <common.h>
 #include <asm/global_data.h>
 #include "ipq5332_ppe.h"
-#ifndef CONFIG_IPQ5332_RUMI
 #include "ipq5332_uniphy.h"
-#endif
 #include <fdtdec.h>
 #include "ipq_phy.h"
 
@@ -269,19 +267,12 @@ void ppe_mac_packet_filter_set(uint32_t port)
 	      (port * MAC_PACKET_FILTER_ADDRESS),
 	      0x80000081);
 }
-
-#ifndef CONFIG_IPQ5332_RUMI
 /*
  * ipq5332_port_mac_clock_reset()
  */
 void ipq5332_port_mac_clock_reset(int port)
 {
 	int reg_val;
-
-	/* PPE Reset */
-	writel(0x1, NSS_CC_PPE_BCR);
-	udelay(10);
-	writel(0x0, NSS_CC_PPE_BCR);
 
 	reg_val = readl(NSS_CC_UNIPHY_PORT1_RX_CBCR + (port * 0x8));
 	reg_val |= GCC_PORT1_ARES;
@@ -331,6 +322,13 @@ void ipq5332_speed_clock_set(int port_id, int clk[4])
 	writel(reg_val[5], NSS_CC_PORT1_RX_CMD_RCGR + 0x14 + (port_id * 0x18));
 	writel(reg_val[3] | 0x1, NSS_CC_PORT1_RX_CMD_RCGR + 0xc +
 			(port_id * 0x18));
+
+	/* Enable UNIPHY port clk */
+	mdelay(100);
+	writel(BIT(0), (NSS_CC_UNIPHY_PORT1_RX_CBCR + (port_id * 0x8)));
+	mdelay(100);
+	writel(BIT(0), (NSS_CC_UNIPHY_PORT1_TX_CBCR + (port_id * 0x8)));
+	mdelay(100);
 }
 
 int phy_status_get_from_ppe(int port_id)
@@ -372,7 +370,6 @@ void ipq5332_10g_r_speed_set(int port, int status)
 	ppe_port_rxmac_status_set(port);
 	ppe_mac_packet_filter_set(port);
 }
-#endif
 
 void ppe_xgmac_speed_set(uint32_t port, int speed)
 {
@@ -412,12 +409,48 @@ void ppe_xgmac_speed_set(uint32_t port, int speed)
 			reg_value);
 }
 
+void ipq5332_xgmac_sgmiiplus_speed_set(int port, int speed, int status)
+{
+	uint32_t reg_value = 0;
 
+	pr_debug("\nDEBUGGING xgmac_sgmiiplus speed_set..PORTID = %d\n", port);
+	ipq5332_ppe_reg_read(PPE_SWITCH_NSS_SWITCH_XGMAC0 +
+		 (port * NSS_SWITCH_XGMAC_MAC_TX_CONFIGURATION), &reg_value);
+
+	switch(speed) {
+	case 0:
+	case 1:
+	case 2:
+		reg_value |=SS(XGMAC_SPEED_SELECT_1000M);
+		break;
+	case 3:
+		reg_value |=SS(XGMAC_SPEED_SELECT_10000M);
+		break;
+	case 4:
+		reg_value |=SS(XGMAC_SPEED_SELECT_2500M);
+		break;
+	case 5:
+		reg_value |=SS(XGMAC_SPEED_SELECT_5000M);
+		break;
+	}
+	reg_value |=JD;
+	ipq5332_ppe_reg_write(PPE_SWITCH_NSS_SWITCH_XGMAC0 +
+		 (port * NSS_SWITCH_XGMAC_MAC_TX_CONFIGURATION), reg_value);
+	pr_debug("NSS_SWITCH_XGMAC_MAC_TX_CONFIGURATION Address = 0x%x"
+			" -> Value = %u\n",
+			PPE_SWITCH_NSS_SWITCH_XGMAC0 +
+			(port * NSS_SWITCH_XGMAC_MAC_TX_CONFIGURATION),
+			reg_value);
+
+	ppe_port_bridge_txmac_set(port, status);
+	ppe_port_txmac_status_set(port);
+	ppe_port_rxmac_status_set(port);
+	ppe_mac_packet_filter_set(port);
+}
 
 void ipq5332_uxsgmii_speed_set(int port, int speed, int duplex,
 				int status)
 {
-#ifndef CONFIG_IPQ5332_RUMI
 	uint32_t uniphy_index;
 
 	if (port == PORT0)
@@ -427,12 +460,9 @@ void ipq5332_uxsgmii_speed_set(int port, int speed, int duplex,
 
 	ppe_uniphy_usxgmii_autoneg_completed(uniphy_index);
 	ppe_uniphy_usxgmii_speed_set(uniphy_index, speed);
-#endif
 	ppe_xgmac_speed_set(port, speed);
-#ifndef CONFIG_IPQ5332_RUMI
 	ppe_uniphy_usxgmii_duplex_set(uniphy_index, duplex);
 	ppe_uniphy_usxgmii_port_reset(uniphy_index);
-#endif
 	ppe_port_bridge_txmac_set(port, status);
 	ppe_port_txmac_status_set(port);
 	ppe_port_rxmac_status_set(port);
@@ -477,7 +507,6 @@ static void ipq5332_ppe_flow_map_tbl_set(int queue, int port)
  */
 static void ipq5332_ppe_tdm_configuration(void)
 {
-#ifndef CONFIG_IPQ5332_RUMI
 	ipq5332_ppe_reg_write(0xc000, 0x22);
 	ipq5332_ppe_reg_write(0xc010, 0x30);
 	ipq5332_ppe_reg_write(0xc020, 0x21);
@@ -492,35 +521,39 @@ static void ipq5332_ppe_tdm_configuration(void)
 	ipq5332_ppe_reg_write(0xc0b0, 0x32);
 	ipq5332_ppe_reg_write(0xc0c0, 0x20);
 	ipq5332_ppe_reg_write(0xc0d0, 0x30);
-	ipq5332_ppe_reg_write(0xc0e0, 0x21);
+	ipq5332_ppe_reg_write(0xc0e0, 0x20);
 	ipq5332_ppe_reg_write(0xc0f0, 0x31);
 	ipq5332_ppe_reg_write(0xc100, 0x22);
 	ipq5332_ppe_reg_write(0xc110, 0x32);
-	ipq5332_ppe_reg_write(0xc120, 0x20);
+	ipq5332_ppe_reg_write(0xc120, 0x21);
 	ipq5332_ppe_reg_write(0xc130, 0x30);
 	ipq5332_ppe_reg_write(0xc140, 0x22);
 	ipq5332_ppe_reg_write(0xc150, 0x31);
-	ipq5332_ppe_reg_write(0xc160, 0x21);
+	ipq5332_ppe_reg_write(0xc160, 0x20);
 	ipq5332_ppe_reg_write(0xc170, 0x32);
 	ipq5332_ppe_reg_write(0xc180, 0x22);
 	ipq5332_ppe_reg_write(0xc190, 0x30);
-	ipq5332_ppe_reg_write(0xc1a0, 0x20);
+	ipq5332_ppe_reg_write(0xc1a0, 0x21);
 	ipq5332_ppe_reg_write(0xc1b0, 0x31);
-	ipq5332_ppe_reg_write(0xc1c0, 0x22);
+	ipq5332_ppe_reg_write(0xc1c0, 0x20);
 	ipq5332_ppe_reg_write(0xc1d0, 0x32);
-#else
-	ipq5332_ppe_reg_write(0xc000, 0x20);
-	ipq5332_ppe_reg_write(0xc010, 0x32);
-	ipq5332_ppe_reg_write(0xc020, 0x21);
-	ipq5332_ppe_reg_write(0xc030, 0x30);
-	ipq5332_ppe_reg_write(0xc040, 0x22);
-	ipq5332_ppe_reg_write(0xc050, 0x31);
-	ipq5332_ppe_reg_write(0xb000, 0x80000006);
-	ipq5332_ppe_reg_write(0x47a000, 0xfa10);
-	ipq5332_ppe_reg_write(0x47a010, 0xfc21);
-	ipq5332_ppe_reg_write(0x47a020, 0xf902);
-	ipq5332_ppe_reg_write(0x400000, 0x3);
-#endif
+	ipq5332_ppe_reg_write(0xb000, 0x80000020);
+
+	writel(0x20,(void *)0x3a47a000);
+	writel(0x12,(void *)0x3a47a010);
+	writel(0x1 ,(void *)0x3a47a020);
+	writel(0x2 ,(void *)0x3a47a030);
+	writel(0x10,(void *)0x3a47a040);
+	writel(0x21,(void *)0x3a47a050);
+	writel(0x2 ,(void *)0x3a47a060);
+	writel(0x10,(void *)0x3a47a070);
+	writel(0x12,(void *)0x3a47a080);
+	writel(0x1 ,(void *)0x3a47a090);
+	writel(0xa ,(void *)0x3a400000);
+
+	writel(0x303,(void *)0x3a026100);
+	writel(0x303,(void *)0x3a026104);
+	writel(0x303,(void *)0x3a026108);
 }
 
 /*
@@ -682,10 +715,10 @@ void ppe_port_mux_mac_type_set(int port_id, int mode)
 	{
 		case EPORT_WRAPPER_PSGMII:
 		case EPORT_WRAPPER_SGMII0_RGMII4:
-		case EPORT_WRAPPER_SGMII_PLUS:
 		case EPORT_WRAPPER_SGMII_FIBER:
 			port_type = PORT_GMAC_TYPE;
 			break;
+		case EPORT_WRAPPER_SGMII_PLUS:
 		case EPORT_WRAPPER_USXGMII:
 		case EPORT_WRAPPER_10GBASE_R:
 			port_type = PORT_XGMAC_TYPE;
@@ -721,16 +754,13 @@ void ipq5332_ppe_interface_mode_init(void)
 		return;
 	}
 
-#ifndef CONFIG_IPQ5332_RUMI
 	ppe_uniphy_mode_set(PPE_UNIPHY_INSTANCE0, mode0);
 	ppe_uniphy_mode_set(PPE_UNIPHY_INSTANCE1, mode1);
-#endif
-
 	/*
 	 * Port1 and Port2 can be used as GMAC or XGMAC.
 	 */
 	ppe_port_mux_mac_type_set(PORT1, mode0);
-	ppe_port_mux_mac_type_set(PORT2, mode0);
+	ppe_port_mux_mac_type_set(PORT2, mode1);
 }
 
 /*

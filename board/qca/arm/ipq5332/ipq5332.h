@@ -39,8 +39,6 @@ extern const add_node_t add_fdt_node[];
 
 #define TCSR_MODE_CTRL_2PORT_2LANE		0x1947544
 
-#define USB30_GUCTL				0x8A0C12C
-
 #define DLOAD_MAGIC_COOKIE			0x10
 #define DLOAD_DISABLED				0x40
 #define DLOAD_BITS				0xFF
@@ -100,6 +98,12 @@ extern const add_node_t add_fdt_node[];
 #define USB2_UTMI_CLK_EN			BIT(1)
 #define CLKCORE					BIT(1)
 #define ATERESET				~BIT(0)
+
+/*
+ * OTP Register
+ */
+#define PHYA0_RFA_RFA_RFA_OTP_OTP_XO_0		0xC5D44AC
+#define PHYA0_RFA_RFA_RFA_OTP_OTP_OV_1		0xC5D4484
 
 /*
  * weak function

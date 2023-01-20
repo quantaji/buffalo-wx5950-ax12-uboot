@@ -28,6 +28,40 @@
 		status = "disabled";
 	};
 
+	slot_Id {
+		slotId = <0>;
+	};
+
+	serial@78B0000 {
+		compatible = "qca,ipq-uartdm";
+		reg = <0x78B0000 0x200>;
+		bit_rate = <0xff>;
+		m_value = <36>;
+		n_value = <15625>;
+		d_value = <15625>;
+		status = "ok";
+		serial_gpio {
+			gpio1 {
+				gpio = <33>;
+				func = <2>;
+				pull = <GPIO_PULL_UP>;
+				drvstr = <GPIO_8MA>;
+			};
+
+			gpio2 {
+				gpio = <35>;
+				func = <2>;
+				pull = <GPIO_PULL_UP>;
+				drvstr = <GPIO_8MA>;
+			};
+		};
+	};
+
+	aliases {
+		uart2 = "/serial@78B0000";
+	};
+
+
 	timer {
 		gcnt_cntcv_lo = <0x4a2000>;
 		gcnt_cntcv_hi = <0x4a2004>;
@@ -51,12 +85,12 @@
 		#size-cells = <0>;
 		compatible = "qcom,qpic-nand-v2.1.1";
 		reg = <0x79B0000 0x10000>;
-		status = "disabled";
+		status = "okay";
 	};
 
 	mmc: sdhci@7804000 {
 		compatible = "qcom,sdhci-msm";
-		status = "disabled";
+		status = "okay";
 	};
 
 	pci0: pci@20000000 {
@@ -129,5 +163,22 @@
 		#size-cells = <0>;
 		reg = <0x78B6000 0x600>;
 		clock-frequency  = <400000>;
+	};
+
+	ess-switch {
+		mdio_gpio {
+			mdc1 {
+				gpio = <27>;
+				func = <1>;
+				pull = <GPIO_NO_PULL>;
+				drvstr = <GPIO_8MA>;
+			};
+			mdio {
+				gpio = <28>;
+				func = <1>;
+				pull = <GPIO_PULL_UP>;
+				drvstr = <GPIO_8MA>;
+			};
+		};
 	};
 };

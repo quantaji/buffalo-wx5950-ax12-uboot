@@ -23,9 +23,9 @@
 		console = "/serial@78AF000";
 		nand = "/nand-controller@79B0000";
 		mmc = "/sdhci@7804000";
-		usb0 = "xhci@8a00000";
-		i2c0 = "/i2c@78B6000";
+		usb0 = "/xhci@8a00000";
 		pci1 = "/pci@18000000";
+		i2c0 = "/i2c@78B6000";
 	};
 
 	serial@78AF000 {
@@ -46,7 +46,7 @@
 		};
 	};
 
-	i2c {
+	i2c@78B6000 {
 		i2c_gpio {
 			gpio1 {
 				gpio = <29>;
@@ -67,7 +67,6 @@
 	};
 
 	nand: nand-controller@79B0000 {
-		status = "disabled";
 		nand_gpio {
 			qspi_dat3 {
 				gpio = <8>;
@@ -149,6 +148,10 @@
 		};
 	};
 
+	usb0: xhci@8a00000 {
+		ssphy = <1>;
+	};
+
 	pci1: pci@18000000 {
 		status = "ok";
 		perst_gpio = <47>;
@@ -165,12 +168,26 @@
 
 	ess-switch {
 		switch_mac_mode0 = <PORT_WRAPPER_SGMII_PLUS>;
-		switch_mac_mode1 = <PORT_WRAPPER_SGMII_PLUS>;
-		qca808x_gpio = <16>;
+		switch_mac_mode1 = <PORT_WRAPPER_USXGMII>;
+		qca808x_gpio = <51>;
 		qca808x_gpio_cnt = <1>;
-		mdc_mdio_gpio = <27 28>;
 		napa_gpio = <22>;
 		qca8084_switch_enable = <1>;
+
+		mdio_gpio {
+			mdc1 {
+				gpio = <27>;
+				func = <1>;
+				pull = <GPIO_PULL_UP>;
+				drvstr = <GPIO_2MA>;
+			};
+			mdio {
+				gpio = <28>;
+				func = <1>;
+				pull = <GPIO_PULL_UP>;
+				drvstr = <GPIO_2MA>;
+			};
+		};
 
 		port_phyinfo {
 			port@0 {
@@ -180,10 +197,10 @@
 				uniphy_mode = <PORT_WRAPPER_SGMII_PLUS>;
 			};
 			port@1 {
-				phy_address = <28>;
+				phy_address = <12>;
 				phy_type = <QCA8081_PHY_TYPE>;
 				uniphy_id = <1>;
-				uniphy_mode = <PORT_WRAPPER_SGMII_PLUS>;
+				uniphy_mode = <PORT_WRAPPER_USXGMII>;
 			};
 		};
 

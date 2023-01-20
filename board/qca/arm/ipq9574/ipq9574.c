@@ -439,6 +439,18 @@ void board_pci_init(int id)
 	return;
 }
 
+static void pci_gpio_low(int offset)
+{
+	struct qca_gpio_config gpio_config;
+
+	for (offset = fdt_first_subnode(gd->fdt_blob, offset); offset > 0;
+		offset = fdt_next_subnode(gd->fdt_blob, offset)) {
+		gpio_config.gpio        = fdtdec_get_uint(gd->fdt_blob,
+							offset, "gpio", 0);
+		gpio_set_value(gpio_config.gpio, GPIO_OUT_LOW);
+	}
+}
+
 void board_pci_deinit()
 {
 	int node, gpio_node, i, err, is_x2;
@@ -474,7 +486,7 @@ void board_pci_deinit()
 
 		gpio_node = fdt_subnode_offset(gd->fdt_blob, node, "pci_gpio");
 		if (gpio_node >= 0)
-			qca_gpio_deinit(gpio_node);
+			pci_gpio_low(gpio_node);
 
 		pcie_v2_clock_deinit(i);
 	}
@@ -1307,8 +1319,6 @@ unsigned int get_dts_machid(unsigned int machid)
 			return MACH_TYPE_IPQ9574_AP_AL02_C4;
 		case MACH_TYPE_IPQ9574_AP_AL02_C6:
 			return MACH_TYPE_IPQ9574_AP_AL02_C1;
-		case MACH_TYPE_IPQ9574_AP_AL02_C9:
-			return MACH_TYPE_IPQ9574_AP_AL02_C1;
 		case MACH_TYPE_IPQ9574_AP_AL02_C11:
 			return MACH_TYPE_IPQ9574_AP_AL02_C13;
 		case MACH_TYPE_IPQ9574_AP_AL02_C12:
@@ -1341,9 +1351,6 @@ void ipq_uboot_fdt_fixup(void)
 			break;
 		case MACH_TYPE_IPQ9574_AP_AL02_C6:
 			config = "config@al02-c6";
-			break;
-		case MACH_TYPE_IPQ9574_AP_AL02_C9:
-			config = "config@al02-c9";
 			break;
 		case MACH_TYPE_IPQ9574_AP_AL02_C11:
 			config = "config@al02-c11";

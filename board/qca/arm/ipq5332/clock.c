@@ -64,6 +64,10 @@ int uart_clock_config(struct ipq_serial_platdata *plat)
 	unsigned long cbcr_val;
 	int ret;
 
+	cbcr_val = readl(GCC_APCS_CLOCK_BRANCH_ENA_VOTE);
+	cbcr_val |= BLSP1_AHB_CLK_ENABLE;
+	writel(cbcr_val, GCC_APCS_CLOCK_BRANCH_ENA_VOTE);
+
 	uart_configure_mux(plat->port_id);
 
 	writel(plat->m_value, GCC_BLSP1_UART_APPS_M(plat->port_id));
@@ -84,7 +88,6 @@ int uart_clock_config(struct ipq_serial_platdata *plat)
 #ifdef CONFIG_QCA_MMC
 void emmc_clock_init(void)
 {
-#ifdef QCA_CLOCK_ENABLE
 	int cfg;
 
 	/* Configure sdcc1_apps_clk_src */
@@ -94,9 +97,14 @@ void emmc_clock_init(void)
 	writel(cfg, GCC_SDCC1_APPS_CFG_RCGR);
 	/*
 	 * Mode is dual edge,
-	 * For 192Mhz doesn't require MND value
+	 * For 192Mhz, MND need to be set to zero
 	 * 1152 / 6 = 192
 	 */
+
+	writel(0, GCC_SDCC1_APPS_M);
+	writel(0, GCC_SDCC1_APPS_N);
+	writel(0, GCC_SDCC1_APPS_D);
+
 	writel(CMD_UPDATE, GCC_SDCC1_APPS_CMD_RCGR);
 	mdelay(10);
 	writel(ROOT_EN, GCC_SDCC1_APPS_CMD_RCGR);
@@ -106,9 +114,7 @@ void emmc_clock_init(void)
 	udelay(10);
 	writel(readl(GCC_SDCC1_AHB_CBCR) | CLK_ENABLE, GCC_SDCC1_AHB_CBCR);
 	udelay(10);
-#else
 	return;
-#endif
 }
 
 void emmc_clock_reset(void)
@@ -121,7 +127,6 @@ void emmc_clock_reset(void)
 #ifdef CONFIG_PCI_IPQ
 void pcie_v2_clock_init(int pcie_id)
 {
-#ifdef QCA_CLOCK_ENABLE
 	int cfg, cfg1,cfg2;
 	static int clk_configure;
 
@@ -131,9 +136,9 @@ void pcie_v2_clock_init(int pcie_id)
 			GCC_PCIE_AUX_CFG_RCGR_SRC_SEL |
 			GCC_PCIE_AUX_CFG_RCGR_SRC_DIV);
 		writel(cfg, GCC_PCIE_AUX_CFG_RCGR);
-		writel(0x1, GCC_PCIE_AUX_M);
-		writel(0xFFE7, GCC_PCIE_AUX_N);
-		writel(0xFFE6, GCC_PCIE_AUX_D);
+		writel(0, GCC_PCIE_AUX_M);
+		writel(0, GCC_PCIE_AUX_N);
+		writel(0, GCC_PCIE_AUX_D);
 		writel(CMD_UPDATE, GCC_PCIE_AUX_CMD_RCGR);
 		mdelay(10);
 		writel(ROOT_EN, GCC_PCIE_AUX_CMD_RCGR);
@@ -210,14 +215,11 @@ void pcie_v2_clock_init(int pcie_id)
 	writel(CLK_ENABLE, GCC_SNOC_PCIE3_1LANE_S_CBCR);
 	writel(CLK_ENABLE, GCC_SNOC_PCIE3_1LANE_1_M_CBCR);
 	writel(CLK_ENABLE, GCC_SNOC_PCIE3_1LANE_1_S_CBCR);
-#else
 	return;
-#endif
 }
 
 void pcie_v2_clock_deinit(int pcie_id)
 {
-#ifdef QCA_CLOCK_ENABLE
 	writel(0x0, GCC_SNOC_PCIE3_2LANE_M_CBCR);
 	writel(0x0, GCC_SNOC_PCIE3_2LANE_S_CBCR);
 	writel(0x0, GCC_SNOC_PCIE3_1LANE_M_CBCR);
@@ -252,15 +254,12 @@ void pcie_v2_clock_deinit(int pcie_id)
 		writel(0x0, GCC_PCIE3X1_1_AUX_CBCR);
 		break;
 	}
-#else
 	return;
-#endif
 }
 #endif
 #ifdef CONFIG_USB_XHCI_IPQ
 void usb_clock_init(void)
 {
-#ifdef QCA_CLOCK_ENABLE
 	int cfg;
 
 	/* Configure usb0_master_clk_src */
@@ -272,7 +271,7 @@ void usb_clock_init(void)
 	writel(ROOT_EN, GCC_USB0_MASTER_CMD_RCGR);
 
 	/* Configure usb0_mock_utmi_clk_src */
-	cfg = (GCC_USB_MOCK_UTMI_SRC_SEL |
+	cfg = (GCC_USB_MOCK_UTMI_MN_MODE | GCC_USB_MOCK_UTMI_SRC_SEL |
 		GCC_USB_MOCK_UTMI_SRC_DIV);
 	writel(cfg, GCC_USB0_MOCK_UTMI_CFG_RCGR);
 	writel(MOCK_UTMI_M, GCC_USB0_MOCK_UTMI_M);
@@ -312,30 +311,60 @@ void usb_clock_init(void)
 	writel(CLK_ENABLE, GCC_USB0_PHY_CFG_AHB_CBCR);
 	writel(CLK_ENABLE, GCC_USB0_AUX_CBCR);
 	writel(CLK_ENABLE, GCC_USB0_LFPS_CBCR);
-#else
 	return;
-#endif
 }
 
 void usb_clock_deinit(void)
 {
-#ifdef QCA_CLOCK_ENABLE
 	writel(0x0, GCC_USB0_PHY_CFG_AHB_CBCR);
 	writel(0x4220, GCC_USB0_MASTER_CBCR);
 	writel(0x0, GCC_USB0_SLEEP_CBCR);
 	writel(0x0, GCC_USB0_MOCK_UTMI_CBCR);
 	writel(0x0, GCC_USB0_AUX_CBCR);
 	writel(0x0, GCC_USB0_LFPS_CBCR);
-#else
 	return;
-#endif
 }
 #endif
 
 #ifdef CONFIG_IPQ5332_EDMA
+void nssnoc_init(void)
+{
+	unsigned int reg_val;
+
+	writel(QDSS_AT_SRC_SEL | QDSS_AT_DIV_SEL, GCC_QDSS_AT_CFG_RCGR);
+	reg_val = readl(GCC_QDSS_AT_CMD_RCGR);
+	writel(reg_val | CMD_UPDATE, GCC_QDSS_AT_CMD_RCGR);
+	mdelay(1);
+	writel(reg_val | ROOT_EN, GCC_QDSS_AT_CMD_RCGR);
+
+
+	/* Enable required NSSNOC clocks */
+	writel(readl(GCC_NSSCFG_CLK) |
+		GCC_CBCR_CLK_ENABLE, GCC_NSSCFG_CLK);
+
+	writel(readl(GCC_NSSNOC_ATB_CLK) | GCC_CBCR_CLK_ENABLE,
+		GCC_NSSNOC_ATB_CLK);
+
+	writel(readl(GCC_NSSNOC_QOSGEN_REF_CLK) | GCC_CBCR_CLK_ENABLE,
+		GCC_NSSNOC_QOSGEN_REF_CLK);
+
+	writel(readl(GCC_NSSNOC_TIMEOUT_REF_CLK) | GCC_CBCR_CLK_ENABLE,
+		GCC_NSSNOC_TIMEOUT_REF_CLK);
+}
+
 void frequency_init(void)
 {
 	unsigned int reg_val;
+
+	/* PCNOC_BFDCD frequency for Uniphy AHB 100M */
+	reg_val = readl(GCC_PCNOC_BFDCD_CFG_RCGR);
+	reg_val &= ~0x7ff;
+	writel(reg_val | PCCNOC_BFDCD_SRC_SEL | PCCNOC_BFDCD_DIV_SEL,
+		GCC_PCNOC_BFDCD_CFG_RCGR);
+	reg_val = readl(GCC_PCNOC_BFDCD_CMD_RCGR);
+	writel(reg_val | CMD_UPDATE, GCC_PCNOC_BFDCD_CMD_RCGR);
+	mdelay(1);
+	writel(reg_val | ROOT_EN, GCC_PCNOC_BFDCD_CMD_RCGR);
 
 	/* GCC NSS frequency 100M */
 	reg_val = readl(NSS_CC_CFG_CFG_RCGR);
@@ -484,6 +513,16 @@ void mdio_clock_init(void)
 	/* MDIO Master Clock init */
 	reg_val = readl(GCC_MDIO_MASTER_AHB_CBCR);
 	writel(reg_val | GCC_CBCR_CLK_ENABLE, GCC_MDIO_MASTER_AHB_CBCR);
+
+	/* Enable 50MHZ */
+	reg_val = readl(MDIO_50MHZ_CLK_BASE);
+	reg_val |= BIT(0);
+	writel(reg_val, MDIO_50MHZ_CLK_BASE);
+
+	reg_val = readl(MDIO_50MHZ_CLK_BASE + 0x10000);
+	reg_val |= BIT(0);
+	writel(reg_val, MDIO_50MHZ_CLK_BASE + 0x10000);
+
 }
 
 
@@ -497,6 +536,10 @@ void noc_clock_init(void)
 
 	reg_val = readl(GCC_NSSNOC_SNOC_1_CBCR);
 	writel(reg_val | GCC_CBCR_CLK_ENABLE, GCC_NSSNOC_SNOC_1_CBCR);
+
+	reg_val = readl(GCC_MEM_NOC_SNOC_AXI_CBCR);
+	writel(reg_val | GCC_CBCR_CLK_ENABLE, GCC_MEM_NOC_SNOC_AXI_CBCR);
+
 }
 
 void uniphy_clock_enable(enum uniphy_clk_type clk_type, bool enable)
@@ -538,6 +581,8 @@ void fixed_clock_init(void)
 
 	fixed_sys_clock_init();
 
+	fixed_uniphy_clock_init();
+
 	port_mac_clock_init();
 
 	cfg_clock_init();
@@ -549,7 +594,6 @@ void fixed_clock_init(void)
 
 void cmbblk_init(void)
 {
-#ifndef CONFIG_IPQ5332_RUMI
 	unsigned int reg_val;
 
 	reg_val = readl(PLL_REFERENCE_CLOCK);
@@ -565,11 +609,12 @@ void cmbblk_init(void)
 	reg_val |= BIT(6);
 	writel(reg_val, PLL_POWER_ON_AND_RESET);
 	mdelay(10);
-#endif
 }
 
 void eth_clock_init(void)
 {
+	nssnoc_init();
+
 	fixed_clock_init();
 
 	uniphy_clk_init(true);
