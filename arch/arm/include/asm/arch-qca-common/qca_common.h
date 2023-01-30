@@ -124,9 +124,10 @@ int is_secondary_core_off(unsigned int cpuid);
 int smem_read_cpu_count(void);
 int get_soc_hw_version(void);
 int is_atf_enabled(void);
+void get_kernel_fs_part_details(void);
 
 struct dumpinfo_t{
-	char name[16]; /* use only file name in 8.3 format */
+	char name[256]; /* use only file name in 8.3 format */
 	uint32_t start;
 	uint32_t size;
 	int is_aligned_access; /* non zero represent 4 byte access */
