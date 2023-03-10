@@ -318,7 +318,6 @@ int board_mmc_init(bd_t *bis)
 #ifdef CONFIG_PCI_IPQ
 void pcie_reset(int pcie_id)
 {
-#ifdef QCA_CLOCK_ENABLE
 	u32 reg_val;
 
 	switch(pcie_id) {
@@ -359,10 +358,6 @@ void pcie_reset(int pcie_id)
 
 		break;
 	}
-
-#else
-	return;
-#endif
 }
 
 int ipq_validate_qfrom_fuse(unsigned int reg_add, int pos)
@@ -464,6 +459,7 @@ void board_pci_deinit()
 			qca_gpio_deinit(gpio_node);
 
 		pcie_v2_clock_deinit(i);
+		pcie_reset(i);
 	}
 
 	return;
@@ -731,6 +727,23 @@ static void usb_init_hsphy(void __iomem *phybase, int ssphy)
 	writel(XCFG_COARSE_TUNE_NUM | XCFG_FINE_TUNE_NUM,
 		phybase + USB2PHY_USB_PHY_M31_XCFGI_11);
 
+	/* Adjust HSTX slew rate to 565 ps*/
+	/* Adjust PLL lock Time counter for release clock to 35uA */
+	/* Adjust Manual control ODT value to 38.02 Ohm */
+	writel(HSTX_SLEW_RATE_565PS | PLL_CHARGING_PUMP_CURRENT_35UA |
+		ODT_VALUE_38_02_OHM, phybase + USB2PHY_USB_PHY_M31_XCFGI_4);
+
+	/*
+	* Enable to always turn on USB 2.0 TX driver
+	* when system is in USB 2.0 HS mode
+	*/
+	writel(USB2_0_TX_ENABLE, phybase + USB2PHY_USB_PHY_M31_XCFGI_1);
+
+	/* Adjust Manual control ODT value to 45.02 Ohm */
+	/* Adjust HSTX Pre-emphasis level to 0.55mA */
+	writel(ODT_VALUE_45_02_OHM | HSTX_PRE_EMPHASIS_LEVEL_0_55MA,
+		phybase + USB2PHY_USB_PHY_M31_XCFGI_5);
+
 	udelay(10);
 
 	writel(0, phybase + USB_PHY_UTMI_CTRL5);
@@ -946,6 +959,11 @@ void set_flash_secondary_type(qca_smem_flash_info_t *smem)
 {
 	return;
 };
+
+int get_soc_hw_version(void)
+{
+	return readl(TCSR_SOC_HW_VERSION_REG);
+}
 
 #ifdef CONFIG_IPQ5332_EDMA
 void set_function_select_as_mdc_mdio(void)
