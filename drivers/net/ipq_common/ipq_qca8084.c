@@ -1344,6 +1344,7 @@ int ipq_qca8084_link_update(phy_info_t * phy_info[])
 	struct port_phy_status phy_status = {0};
 	int rv, port_id, status = 1;
 
+	printf("QCA8084-switch status:\n");
 	for (int i=PORT1; i<PORT5; i++) {
 		port_id = phy_info[i]->phy_address;
 		if (phy_info[i]->phy_type == UNUSED_PHY_TYPE)
@@ -1356,7 +1357,7 @@ int ipq_qca8084_link_update(phy_info_t * phy_info[])
 			return status;
 		}
 
-		printf("QCA8084-switch PORT%d %s Speed :%d %s duplex\n", port_id,
+		printf("PORT%d %s Speed :%d %s duplex\n", port_id,
 			(phy_status.link_status?"Up":"Down"),
 			phy_status.speed, (phy_status.duplex?"Full":"Half"));
 
@@ -1389,7 +1390,7 @@ int ipq_qca8084_hw_init(phy_info_t * phy_info[])
 	int ret = 0;
 	int mode0 = -1, mode1 = -1, node = -1;
 	qca8084_work_mode_t work_mode;
-	u32 port_bmp = 0x3e, cpu_bmp = 0x1;
+	u32 port_bmp, cpu_bmp;
 
 	int chip_type = chip_ver_get();
 
@@ -1410,6 +1411,10 @@ int ipq_qca8084_hw_init(phy_info_t * phy_info[])
 		printf("Error: switch_mac_mode1 not specified in dts\n");
 		return mode1;
 	}
+
+	port_bmp = fdtdec_get_uint(gd->fdt_blob, node, "switch_lan_bmp", 0x3e);
+
+	cpu_bmp = fdtdec_get_uint(gd->fdt_blob, node, "switch_cpu_bmp", 0x1);
 
 	ipq_qca8084_switch_reset();
 
