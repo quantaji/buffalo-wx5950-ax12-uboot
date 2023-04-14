@@ -68,7 +68,8 @@ bool qca8084_port_rxfc_forcemode[QCA8084_MAX_PORTS] = {};
 #endif /* CONFIG_QCA8084_SWT_MODE */
 
 #ifdef CONFIG_QCA8084_BYPASS_MODE
-extern void qca8084_phy_sgmii_mode_set(uint32_t phy_addr, u32 interface_mode);
+extern void qca8084_phy_sgmii_mode_set(uint32_t phy_addr, u32 interface_mode,
+		u32 link, fal_port_speed_t speed);
 #endif /* CONFIG_QCA8084_BYPASS_MODE */
 
 static int qca8084_reg_field_get(u32 reg_addr, u32 bit_offset,
@@ -1310,14 +1311,95 @@ void port_link_update(u32 port_id, struct port_phy_status phy_status)
 	return;
 }
 
+static void port_3az_status_set(u32 port_id, bool enable)
+{
+	u32 reg = 0, field, offset, device_id, reverse = 0;
+	u32 eee_mask = 0;
+
+	QCA8084_REG_ENTRY_GET(MASK_CTL, 0, (u8 *) (&reg));
+
+	SW_GET_FIELD_BY_REG(MASK_CTL, DEVICE_ID, device_id, reg);
+	switch (device_id) {
+		case QCA_VER_QCA8084:
+			eee_mask = 3;
+			reverse = 0;
+			break;
+		default:
+			printf("%s %d Unsupported DEV_ID \n", __func__, __LINE__);
+			return;
+	}
+
+	QCA8084_REG_ENTRY_GET(EEE_CTL, 0, (u8 *) (&reg));
+
+	if (true == enable)
+	{
+		field  = eee_mask;
+	}
+	else if (false == enable)
+	{
+		field  = 0;
+	}
+
+	if (reverse)
+	{
+		field = (~field) & eee_mask;
+	}
+
+	offset = (port_id - 1) * ISISC_LPI_BIT_STEP + ISISC_LPI_PORT1_OFFSET;
+	reg &= (~(eee_mask << offset));
+	reg |= (field << offset);
+
+	QCA8084_REG_ENTRY_SET(EEE_CTL, 0, (u8 *) (&reg));
+	return;
+}
+
+static void qos_port_tx_buf_nr_set(u32 port_id, u32 * number)
+{
+	u32 val = 0;
+	if (ISISC_QOS_PORT_TX_BUFFER_MAX < *number)
+	{
+		printf("%s %d Bad param \n", __func__, __LINE__);
+		return;
+	}
+
+	val = *number / ISISC_QOS_HOL_STEP;
+	*number = val << ISISC_QOS_HOL_MOD;
+	QCA8084_REG_FIELD_SET(PORT_HOL_CTL0, port_id, PORT_DESC_NR,
+			(u8 *) (&val));
+	return;
+}
+
+static void qos_port_rx_buf_nr_set(u32 port_id, u32 * number)
+{
+	u32 val = 0;
+	if (ISISC_QOS_PORT_RX_BUFFER_MAX < *number)
+	{
+		printf("%s %d Bad param \n", __func__, __LINE__);
+		return;
+	}
+
+	val = *number / ISISC_QOS_HOL_STEP;
+	*number = val << ISISC_QOS_HOL_MOD;
+	QCA8084_REG_FIELD_SET(PORT_HOL_CTL1, port_id, PORT_IN_DESC_EN,
+			(u8 *) (&val));
+	return;
+}
+
 void qca_switch_init(u32 port_bmp, u32 cpu_bmp, phy_info_t * phy_info[])
 {
+	u32 port_hol_ctrl[2] = {0};
 	int i = 0;
+	u32 temp;
 
 	port_bmp |= cpu_bmp;
 	while (port_bmp) {
 		pr_debug("configuring port: %d \n", i);
 		if (port_bmp & 1) {
+			temp = 0;
+			QCA8084_REG_FIELD_GET(FORWARD_CTL1, 0, BC_FLOOD_DP, (u8 *) (&temp));
+			temp |= (0x1 << i);
+			QCA8084_REG_FIELD_SET(FORWARD_CTL1, 0, BC_FLOOD_DP, (u8 *) (&temp));
+
 			qca8084_port_txmac_status_set(i, false);
 			qca8084_port_rxmac_status_set(i, false);
 
@@ -1328,10 +1410,24 @@ void qca_switch_init(u32 port_bmp, u32 cpu_bmp, phy_info_t * phy_info[])
 				header_type_set(true, QCA8084_HEADER_TYPE_VAL);
 				port_rxhdr_mode_set(i, FAL_ONLY_MANAGE_FRAME_EN);
 				port_txhdr_mode_set(i, FAL_NO_HEADER_EN);
+
+				/* port tx buf number */
+				port_hol_ctrl[0] = 600;
+				/* port rx buf number */
+				port_hol_ctrl[1] = 48;
 			} else {
 				qca8084_port_flowctrl_set(i, true);
 				qca8084_port_flowctrl_forcemode_set(i, false);
 			}
+
+			port_3az_status_set(i, false);
+
+			temp=1;
+			QCA8084_REG_FIELD_SET(PORT_HOL_CTL1, i, PORT_RED_EN, (u8 *) (&temp));
+
+			qos_port_tx_buf_nr_set(i, &port_hol_ctrl[0]);
+			qos_port_rx_buf_nr_set(i, &port_hol_ctrl[1]);
+
 		}
 		port_bmp >>=1;
 		i++;
@@ -1344,6 +1440,7 @@ int ipq_qca8084_link_update(phy_info_t * phy_info[])
 	struct port_phy_status phy_status = {0};
 	int rv, port_id, status = 1;
 
+	printf("QCA8084-switch status:\n");
 	for (int i=PORT1; i<PORT5; i++) {
 		port_id = phy_info[i]->phy_address;
 		if (phy_info[i]->phy_type == UNUSED_PHY_TYPE)
@@ -1356,7 +1453,7 @@ int ipq_qca8084_link_update(phy_info_t * phy_info[])
 			return status;
 		}
 
-		printf("QCA8084-switch PORT%d %s Speed :%d %s duplex\n", port_id,
+		printf("PORT%d %s Speed :%d %s duplex\n", port_id,
 			(phy_status.link_status?"Up":"Down"),
 			phy_status.speed, (phy_status.duplex?"Full":"Half"));
 
@@ -1389,7 +1486,7 @@ int ipq_qca8084_hw_init(phy_info_t * phy_info[])
 	int ret = 0;
 	int mode0 = -1, mode1 = -1, node = -1;
 	qca8084_work_mode_t work_mode;
-	u32 port_bmp = 0x3e, cpu_bmp = 0x1;
+	u32 port_bmp, cpu_bmp;
 
 	int chip_type = chip_ver_get();
 
@@ -1410,6 +1507,10 @@ int ipq_qca8084_hw_init(phy_info_t * phy_info[])
 		printf("Error: switch_mac_mode1 not specified in dts\n");
 		return mode1;
 	}
+
+	port_bmp = fdtdec_get_uint(gd->fdt_blob, node, "switch_lan_bmp", 0x3e);
+
+	cpu_bmp = fdtdec_get_uint(gd->fdt_blob, node, "switch_cpu_bmp", 0x1);
 
 	ipq_qca8084_switch_reset();
 
@@ -1444,10 +1545,45 @@ void ipq_qca8084_switch_hw_reset(int gpio)
 #endif /* CONFIG_QCA8084_SWT_MODE */
 
 #ifdef CONFIG_QCA8084_BYPASS_MODE
+void qca8084_phy_sgmii_speed_fixup (u32 phy_addr, u32 link,
+		fal_port_speed_t new_speed)
+{
+	/*disable ethphy3 and uniphy0 clock*/
+	pr_debug("disable ethphy3 and uniphy0 clock\n");
+	qca8084_port_clk_en_set(PORT4, QCA8084_CLK_TYPE_EPHY, false);
+	qca8084_port_clk_en_set(PORT5, QCA8084_CLK_TYPE_UNIPHY, false);
+
+	/*set gmii clock for ethphy3 and uniphy0*/
+	pr_debug("set speed clock for eth3 and uniphy0\n");
+	qca8084_port_speed_clock_set(PORT4, new_speed);
+
+	/*uniphy and ethphy gmii clock enable/disable*/
+	pr_debug("uniphy and ethphy GMII clock enable/disable\n");
+	if(!link)
+	{
+		pr_debug("enable ethphy3 and uniphy0 clock\n");
+		qca8084_port_clk_en_set(PORT4, QCA8084_CLK_TYPE_EPHY, true);
+		qca8084_port_clk_en_set(PORT5, QCA8084_CLK_TYPE_UNIPHY, true);
+	}
+	/*uniphy and ethphy gmii reset and release*/
+	pr_debug("uniphy and ethphy GMII interface reset and release\n");
+	qca8084_port_clk_reset(PORT4, QCA8084_CLK_TYPE_EPHY);
+	qca8084_port_clk_reset(PORT5, QCA8084_CLK_TYPE_UNIPHY);
+
+	/*uniphy and ethphy ipg_tune reset, function reset*/
+	pr_debug("uniphy and ethphy ipg_tune reset, function reset\n");
+	qca8084_uniphy_sgmii_function_reset(QCA8084_UNIPHY_SGMII_0);
+
+	/*do ethphy function reset*/
+	pr_debug("do ethphy function reset\n");
+	qca8084_phy_function_reset(phy_addr);
+	return;
+}
+
 void qca8084_bypass_interface_mode_set(u32 interface_mode)
 {
 	ipq_qca8084_work_mode_set(QCA8084_PHY_SGMII_UQXGMII_MODE);
-	qca8084_phy_sgmii_mode_set(PORT4, interface_mode);
+	qca8084_phy_sgmii_mode_set(PORT4, interface_mode, false, FAL_SPEED_1000);
 
 	pr_debug("ethphy3 software reset\n");
 	qca8084_phy_reset(PORT4);

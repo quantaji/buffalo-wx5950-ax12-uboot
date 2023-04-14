@@ -98,7 +98,7 @@ soc_hw_version_ipq807x = { 0x200D0100, 0x200D0101, 0x200D0102, 0x200D0200 };
 soc_hw_version_ipq6018 = { 0x20170100 };
 soc_hw_version_ipq5018 = { 0x20180100, 0x20180101 };
 soc_hw_version_ipq9574 = { 0x20190100 };
-soc_hw_version_ipq5332 = { 0x201A0100 };
+soc_hw_version_ipq5332 = { 0x201A0100, 0x201A0101 };
 
 #
 # Python 2.6 and earlier did not have OrderedDict use the backport
@@ -2262,7 +2262,7 @@ class Pack(object):
                                    flinfo.chipsize, blocksize, chipsize, root_part)
                 self.partitions = mibib_qcn9224.get_parts()
 
-                script.append('if test "$machid" = "8050301" || test "$machid" = "8050501"  || test "$machid" = "8050601" || test "$machid" = "8050701" || test "$machid" = "8050801" || test "$machid" = "8050901" || test "$machid" = "8050a01" || test "$machid" = "8050b01" || test "$machid" = "8050c01" || test "$machid" = "8050d01" || test "$machid" = "8050e01" || test "$machid" = "8050f01" || test "$machid" = "0x8051101" || test "$machid" = "8051201" || test "$machid" = "8050002" || test "$machid" = "8050102"; then\n', fatal=False)
+                script.append('if test "$machid" = "8050301" || test "$machid" = "8050501"  || test "$machid" = "8050601" || test "$machid" = "8050701" || test "$machid" = "8050801" || test "$machid" = "8050901" || test "$machid" = "8050a01" || test "$machid" = "8050b01" || test "$machid" = "8050c01" || test "$machid" = "8050d01" || test "$machid" = "8050e01" || test "$machid" = "8050f01" || test "$machid" = "8051001" || test "$machid" = "0x8051101" || test "$machid" = "8051201" || test "$machid" = "8050002" || test "$machid" = "8050102"; then\n', fatal=False)
                 ret = self.__gen_flash_script(script, flinfo, root, True)
                 if ret == 0:
                     return 0 #Issue in packing al+wkk single-image
@@ -2288,7 +2288,7 @@ class Pack(object):
 		gpt = GPT(part_fname_qcn9224, flinfo.pagesize, flinfo.blocksize, flinfo.chipsize)
 		self.partitions = gpt.get_parts()
 
-                script.append('if test "$machid" = "8050301" || test "$machid" = "8050501"  || test "$machid" = "8050601" || test "$machid" = "8050701" || test "$machid" = "8050801" || test "$machid" = "8050901" || test "$machid" = "8050a01" || test "$machid" = "8050b01" || test "$machid" = "8050c01" || test "$machid" = "8050d01" || test "$machid" = "8050e01" || test "$machid" = "8050f01" || test "$machid" = "0x8051101" || test "$machid" = "8051201" || test "$machid" = "8050002" || test "$machid" = "8050102"; then\n', fatal=False)
+                script.append('if test "$machid" = "8050301" || test "$machid" = "8050501"  || test "$machid" = "8050601" || test "$machid" = "8050701" || test "$machid" = "8050801" || test "$machid" = "8050901" || test "$machid" = "8050a01" || test "$machid" = "8050b01" || test "$machid" = "8050c01" || test "$machid" = "8050d01" || test "$machid" = "8050e01" || test "$machid" = "8050f01" || test "$machid" = "8051001" || test "$machid" = "0x8051101" || test "$machid" = "8051201" || test "$machid" = "8050002" || test "$machid" = "8050102"; then\n', fatal=False)
 		ret = self.__gen_flash_script(script, flinfo, root, True)
 		if ret == 0:
 			return 0 #Issue in packing al+wkk single-image
