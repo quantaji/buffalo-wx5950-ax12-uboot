@@ -739,11 +739,17 @@ static void usb_init_hsphy(void __iomem *phybase, int ssphy)
 
 static void usb_init_ssphy(void __iomem *phybase)
 {
+	writel(CLK_ENABLE, GCC_PCIE3X1_PHY_AHB_CBCR);
 	writel(CLK_ENABLE, GCC_USB0_PHY_CFG_AHB_CBCR);
 	writel(CLK_ENABLE, GCC_USB0_PIPE_CBCR);
 	udelay(100);
 	writel(APB_REG_UPHY_RX_RESCAL_CODE | APB_REG_UPHY_RX_AFE_CAP1 |
 		APB_REG_UPHY_RX_AFE_RES1, PCIE_USB_COMBO_PHY_CFG_RX_AFE_2);
+	writel(APB_REG_UPHY_RXD_BIT_WIDTH | APB_REG_UPHY_RX_PLOOP_GAIN |
+		APB_REG_UPHY_RX_DLF_RATE | APB_UPHY_RX_PLOOP_EN |
+		APB_REG_UPHY_RX_CDR_EN, PCIE_USB_COMBO_PHY_CFG_RX_DLF_DEMUX_2);
+	writel(APB_REG_FLOOP_GAIN, PCIE_USB_COMBO_PHY_CFG_MISC1);
+
 	return;
 }
 
