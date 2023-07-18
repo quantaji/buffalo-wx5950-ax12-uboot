@@ -904,7 +904,7 @@ class Pack(object):
         elif flinfo.type == "emmc" or self.flash_type == "norplusemmc":
             script.append("flashinit mmc")
 
-        if flinfo.type != "emmc":
+        if flinfo.type != "emmc" and image_type != "hlos":
             self.__gen_script_mibib(script, flinfo, parts, parts_length, "mibib_reload")
 
         for index in range(parts_length):
