@@ -712,10 +712,10 @@ static void usb_init_hsphy(void __iomem *phybase, int ssphy)
 	writel(XCFG_COARSE_TUNE_NUM | XCFG_FINE_TUNE_NUM,
 		phybase + USB2PHY_USB_PHY_M31_XCFGI_11);
 
-	/* Adjust HSTX slew rate to 565 ps*/
+	/* Adjust HSTX slew rate to 400 ps*/
 	/* Adjust PLL lock Time counter for release clock to 35uA */
 	/* Adjust Manual control ODT value to 38.02 Ohm */
-	writel(HSTX_SLEW_RATE_565PS | PLL_CHARGING_PUMP_CURRENT_35UA |
+	writel(HSTX_SLEW_RATE_400PS | PLL_CHARGING_PUMP_CURRENT_35UA |
 		ODT_VALUE_38_02_OHM, phybase + USB2PHY_USB_PHY_M31_XCFGI_4);
 
 	/*
@@ -724,10 +724,17 @@ static void usb_init_hsphy(void __iomem *phybase, int ssphy)
 	*/
 	writel(USB2_0_TX_ENABLE, phybase + USB2PHY_USB_PHY_M31_XCFGI_1);
 
-	/* Adjust Manual control ODT value to 45.02 Ohm */
 	/* Adjust HSTX Pre-emphasis level to 0.55mA */
-	writel(ODT_VALUE_45_02_OHM | HSTX_PRE_EMPHASIS_LEVEL_0_55MA,
+	writel(HSTX_PRE_EMPHASIS_LEVEL_0_55MA,
 		phybase + USB2PHY_USB_PHY_M31_XCFGI_5);
+
+	/*
+	* Adjust HSTX Current of current-mode driver,
+	* default 18.5mA * 22.5ohm = 416mV
+	* 17.1mA * 22.5ohm = 385mV
+	*/
+	writel(HSTX_CURRENT_17_1MA_385MV,
+		phybase + USB2PHY_USB_PHY_M31_XCFGI_9);
 
 	udelay(10);
 
@@ -810,6 +817,53 @@ int ipq_board_usb_init(void)
 	return 0;
 }
 #endif
+
+unsigned int get_dts_machid(unsigned int machid)
+{
+	switch (machid)
+	{
+		case MACH_TYPE_IPQ5332_AP_MI01_3_C2:
+			return MACH_TYPE_IPQ5332_AP_MI01_3;
+		case MACH_TYPE_IPQ5332_AP_MI04_1_C2:
+			return MACH_TYPE_IPQ5332_AP_MI04_1;
+		default:
+			return machid;
+	}
+}
+
+void ipq_uboot_fdt_fixup(void)
+{
+	int ret, len;
+	char *config = NULL;
+
+	switch (gd->bd->bi_arch_number)
+	{
+		case MACH_TYPE_IPQ5332_AP_MI01_3_C2:
+			config = "config@mi01.3-c2";
+			break;
+		case MACH_TYPE_IPQ5332_AP_MI04_1_C2:
+			config = "config@mi04.1-c2";
+			break;
+	}
+
+	if (config != NULL)
+	{
+		len = fdt_totalsize(gd->fdt_blob) + strlen(config) + 1;
+
+		/*
+		 * Open in place with a new length.
+		*/
+		ret = fdt_open_into(gd->fdt_blob, (void *)gd->fdt_blob, len);
+		if (ret)
+			 printf("uboot-fdt-fixup: Cannot expand FDT: %s\n", fdt_strerror(ret));
+
+		ret = fdt_setprop((void *)gd->fdt_blob, 0, "config_name",
+				config, (strlen(config)+1));
+		if (ret)
+			printf("uboot-fdt-fixup: unable to set config_name(%d)\n", ret);
+	}
+	return;
+}
 
 __weak int ipq_get_tz_version(char *version_name, int buf_size)
 {
