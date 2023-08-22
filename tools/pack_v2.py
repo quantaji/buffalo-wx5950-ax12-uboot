@@ -903,8 +903,10 @@ class Pack(object):
             script.append("flashinit nand")
         elif flinfo.type == "emmc" or self.flash_type == "norplusemmc":
             script.append("flashinit mmc")
+        if flinfo.type == "emmc":
+            script.append("flupdate set mmc")
 
-        if flinfo.type != "emmc":
+        if flinfo.type != "emmc" and image_type != "hlos":
             self.__gen_script_mibib(script, flinfo, parts, parts_length, "mibib_reload")
 
         for index in range(parts_length):
@@ -1067,6 +1069,9 @@ class Pack(object):
                     wifi_fw_type = ""
 
                 continue
+
+        if flinfo.type == "emmc":
+            script.append("flupdate clear")
 
         return 1
 
