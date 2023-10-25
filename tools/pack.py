@@ -920,7 +920,8 @@ class Pack(object):
         wifi_fw_cmd += "setenv mtdparts mtdparts=nand0:0x%x@0x%x(rootfs)\n" % (rootfs_len,rootfs_offset)
         wifi_fw_cmd += "ubi part rootfs\n"
         img_size = self.__get_img_size(fw_filename)
-        wifi_fw_cmd += "ubi write $fileaddr wifi_fw %x" % img_size
+        wifi_fw_cmd += "ubi write $fileaddr wifi_fw %x\n" % img_size
+        wifi_fw_cmd += "ubi detach"
         script.append(wifi_fw_cmd, fatal=False)
 
         #Enable the below lines for debugging purpose
