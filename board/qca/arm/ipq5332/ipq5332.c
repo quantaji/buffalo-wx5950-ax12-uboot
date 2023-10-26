@@ -38,6 +38,7 @@
 #include <usb.h>
 #endif
 
+#define CONFIG_NAME_MAX_LEN	128
 #define FLASH_SEL_BIT	7
 #define LINUX_NAND_DTS "/soc/nand@79b0000/"
 #define LINUX_MMC_DTS "/soc/sdhci@7804000/"
@@ -825,6 +826,62 @@ int ipq_board_usb_init(void)
 	return 0;
 }
 #endif
+
+unsigned int get_dts_machid(unsigned int machid)
+{
+	switch (machid)
+	{
+		case MACH_TYPE_IPQ5332_AP_MI01_2_C2:
+			return MACH_TYPE_IPQ5332_AP_MI01_2;
+		default:
+			return machid;
+	}
+}
+
+void ipq_uboot_fdt_fixup(void)
+{
+	int ret, len = 0, config_nos = 0;
+	char config[CONFIG_NAME_MAX_LEN];
+	char *config_list[6] = { NULL };
+
+	switch (gd->bd->bi_arch_number)
+	{
+		case MACH_TYPE_IPQ5332_AP_MI01_2_C2:
+			config_list[config_nos++] = "config@mi01.2-c2";
+			config_list[config_nos++] = "config@rdp484";
+			config_list[config_nos++] = "config-rdp484";
+			break;
+	}
+
+	if (config_nos)
+	{
+		while (config_nos--) {
+			strlcpy(&config[len], config_list[config_nos],
+					CONFIG_NAME_MAX_LEN - len);
+			len += strnlen(config_list[config_nos],
+					CONFIG_NAME_MAX_LEN) + 1;
+			if (len > CONFIG_NAME_MAX_LEN) {
+				printf("skipping uboot fdt fixup err: "
+						"config name len-overflow\n");
+				return;
+			}
+		}
+
+		/*
+		 * Open in place with a new length.
+		*/
+		ret = fdt_open_into(gd->fdt_blob, (void *)gd->fdt_blob,
+				fdt_totalsize(gd->fdt_blob) + len);
+		if (ret)
+			printf("uboot-fdt-fixup: Cannot expand FDT: %s\n", fdt_strerror(ret));
+
+		ret = fdt_setprop((void *)gd->fdt_blob, 0, "config_name",
+				config, len);
+		if (ret)
+			printf("uboot-fdt-fixup: unable to set config_name(%d)\n", ret);
+	}
+	return;
+}
 
 __weak int ipq_get_tz_version(char *version_name, int buf_size)
 {
