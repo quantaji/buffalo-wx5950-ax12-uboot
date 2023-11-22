@@ -439,6 +439,21 @@ void board_pci_init(int id)
 	return;
 }
 
+void board_sc_led_init(void)
+{
+	int node;
+
+	node = fdt_path_offset(gd->fdt_blob, "/sc_led");
+	if (node < 0) {
+		printf("Could not find sc_led in device tree\n");
+		return;
+	}
+
+	qca_gpio_init(node);
+
+	return;
+}
+
 static void pci_gpio_low(int offset)
 {
 	struct qca_gpio_config gpio_config;

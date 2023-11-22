@@ -155,4 +155,33 @@
 			};
 		};
 	};
+	sc_led {
+		LED_R {
+			gpio = <6>;
+			func = <0>;
+			pull = <GPIO_PULL_UP>;
+			oe = <GPIO_OD_ENABLE>;
+			od_en = <GPIO_OD_DISABLE>;
+			drvstr = <GPIO_8MA>;
+			out = <1>;
+		};
+		LED_G {
+			gpio = <16>;
+			func = <0>;
+			pull = <GPIO_PULL_UP>;
+			oe = <GPIO_OD_ENABLE>;
+			od_en = <GPIO_OD_DISABLE>;
+			drvstr = <GPIO_8MA>;
+			out = <0>;
+		};
+		LED_B {
+			gpio = <17>;
+			func = <0>;
+			pull = <GPIO_PULL_UP>;
+			oe = <GPIO_OD_ENABLE>;
+			od_en = <GPIO_OD_DISABLE>;
+			drvstr = <GPIO_8MA>;
+			out = <0>;
+		};
+	};
 };

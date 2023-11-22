@@ -71,6 +71,8 @@ DECLARE_GLOBAL_DATA_PTR;
 extern int prom_init(void);
 #endif
 
+extern void board_sc_led_init(void);
+
 ulong monitor_flash_len;
 
 __weak int board_flash_wp_on(void)
@@ -521,6 +523,13 @@ static int initr_malloc_bootparams(void)
 }
 #endif
 
+
+static int initr_sc_led(void)
+{
+    board_sc_led_init();
+	return 0;
+}
+
 static int initr_jumptable(void)
 {
 	jumptable_init();
@@ -865,6 +874,7 @@ init_fnc_t init_sequence_r[] = {
 	initr_pci,
 #endif
 	stdio_add_devices,
+    initr_sc_led,
 	initr_jumptable,
 #ifdef CONFIG_API
 	initr_api,

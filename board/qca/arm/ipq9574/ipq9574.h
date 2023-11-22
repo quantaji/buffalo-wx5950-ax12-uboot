@@ -253,6 +253,8 @@ void board_pci_init(int id);
 __weak void board_pcie_clock_init(int id) {}
 #endif
 
+void board_sc_led_init(void);
+
 unsigned int __invoke_psci_fn_smc(unsigned int, unsigned int,
 					 unsigned int, unsigned int);
 
