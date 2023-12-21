@@ -848,6 +848,7 @@ void ipq_uboot_fdt_fixup(void)
 	{
 		case MACH_TYPE_IPQ5332_AP_MI01_2_C2:
 			config_list[config_nos++] = "config@mi01.2-c2";
+			config_list[config_nos++] = "config-mi01.2-c2";
 			config_list[config_nos++] = "config@rdp484";
 			config_list[config_nos++] = "config-rdp484";
 			break;
