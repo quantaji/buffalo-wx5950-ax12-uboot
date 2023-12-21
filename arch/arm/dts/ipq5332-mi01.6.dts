@@ -17,7 +17,7 @@
 #include "ipq5332-soc.dtsi"
 / {
 	machid = <0x8060000>;
-	config_name = "config@mi01.6";
+	config_name = "config@mi01.6", "config-mi01.6";
 
 	aliases {
 		console = "/serial@78AF000";
