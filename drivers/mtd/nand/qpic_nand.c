@@ -413,10 +413,27 @@ static struct qpic_serial_nand_params qpic_serial_nand_tbl[] = {
 		.check_quad_config = true,
 		.name = "MX35UF1G24AD",
 	},
+	{
+        .id = { 0x0B, 0x55 },
+        .page_size = 2048,
+        .erase_blk_size = 0x00020000,
+        .pgs_per_blk = 64,
+        .no_of_blocks = 2048,
+        .spare_size = 128,
+        .density = 0x10000000,
+        .otp_region = 0x2000,
+        .no_of_addr_cycle = 0x3,
+        .num_bits_ecc_correctability = 8,
+        .timing_mode_support = 0,
+        .quad_mode = true,
+        .check_quad_config = true,
+        .name = "XT26Q12DWSIGA",
+        },
 };
 struct qpic_serial_nand_params *serial_params;
 #define MICRON_DEVICE_ID	0x152c152c
 #define WINBOND_MFR_ID		0xef
+#define XTX_MFR_ID          0x0b
 #define CMD3_MASK		0xfff0ffff
 /*
  * An array holding the fixed pattern to compare with
@@ -1563,6 +1580,42 @@ int qpic_spi_nand_config(struct mtd_info *mtd)
 					__func__);
 		}
 	}
+
+		if (dev->vendor == XTX_MFR_ID) {
+		status = qpic_serial_get_feature(mtd, FLASH_SPI_NAND_FR_ADDR);
+		if (status < 0) {
+			printf("%s : Error in getting feature.\n",__func__);
+			return status;
+		}
+
+		if (!((status >> 8) & FLASH_SPI_NAND_FR_BUFF_ENABLE)) {
+			qspi_debug("%s :continous buffer mode disabled\n",
+				__func__);
+			qspi_debug("%s : Issuing set feature command to enable it\n",
+					__func__);
+			status = qpic_serial_set_feature(mtd, FLASH_SPI_NAND_FR_ADDR,
+				(FLASH_SPI_NAND_FR_BUFF_ENABLE | (status >> 8)));
+			if (status < 0) {
+				printf("%s : Error in disabling continous buffer bit.\n",
+						__func__);
+				return status;
+			}
+		} else {
+			status = qpic_serial_set_feature(mtd, FLASH_SPI_NAND_FR_ADDR,
+                               (FLASH_SPI_NAND_FR_BUFF_ENABLE & ~(status >> 8)));
+                       if (status < 0) {
+                               printf("%s : Error in disabling continous buffer bit.\n",
+                                               __func__);
+                               return status;
+                       }
+                       status = qpic_serial_get_feature(mtd, FLASH_SPI_NAND_FR_ADDR);
+                       if (status < 0) {
+                               printf("%s : Error in getting feature.\n",__func__);
+                               return status;
+                       }
+		}
+	}
+
 	/* Enable QUAD mode if device supported. Check this condition only
 	 * if dev->quad_mode = true , means device will support Quad mode
 	 * else no need to check for Quad mode.
