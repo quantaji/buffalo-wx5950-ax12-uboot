@@ -28,6 +28,10 @@
 
 #define CONFIG_SYS_NONCACHED_MEMORY     (1 << 20)
 
+#define CONFIG_CMD_AES
+#define CONFIG_CMD_AES_256
+#define CONFIG_IPQ_DERIVE_KEY
+
 #define CONFIG_SYS_VSNPRINTF
 
 /*
