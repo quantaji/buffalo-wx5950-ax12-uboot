@@ -613,7 +613,7 @@ int get_eth_caldata(u32 *caldata, u32 offset)
 
 }
 
-void board_update_caldata(void)
+void board_initialize_RF_caldata(void)
 {
 	u32 reg_val=0u;
 	s32 ret = 0 ;
@@ -660,6 +660,14 @@ void board_update_caldata(void)
 
 	reg_val = ((reg_val&0x00001FFF) | ((u32_CDACIN | u32_CDACOUT)&(~0x00001FFF)));
 	qca_scm_call_write(0x2, 0x23,(u32 *)PHYA0_RFA_RFA_RFA_OTP_OTP_XO_0, reg_val);
+}
+
+/*
+ * Board specific config settings are done here
+ */
+void board_late_init_extended(void)
+{
+	board_initialize_RF_caldata();
 }
 
 #ifdef CONFIG_USB_XHCI_IPQ
@@ -1281,7 +1289,6 @@ int board_eth_init(bd_t *bis)
 	ret = ipq5332_edma_init(NULL);
 	if (ret != 0)
 		printf("%s: ipq5332_edma_init failed : %d\n", __func__, ret);
-	board_update_caldata();
 	return ret;
 }
 #endif

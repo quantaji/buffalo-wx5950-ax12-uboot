@@ -453,6 +453,11 @@ __weak int get_soc_hw_version(void)
 	return 0;
 }
 
+__weak void board_late_init_extended(void)
+{
+	return;
+}
+
 int board_late_init(void)
 {
 	unsigned int machid;
@@ -506,6 +511,8 @@ int board_late_init(void)
 		printf("Dload magic cookie will not be set for warm reset\n");
 		sdi_disable();
 	}
+
+	board_late_init_extended();
 
 	return 0;
 }
