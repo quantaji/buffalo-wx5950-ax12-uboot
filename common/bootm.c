@@ -711,7 +711,9 @@ int do_bootm_states(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[],
 
 	/* Now run the OS! We hope this doesn't return */
 	if (!ret && (states & BOOTM_STATE_OS_GO)) {
+#ifdef CONFIG_PCI_IPQ
 		board_pci_deinit();
+#endif
 
 #ifdef CONFIG_USB_XHCI_IPQ
 		usb_stop();

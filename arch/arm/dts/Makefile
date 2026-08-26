@@ -20,23 +20,7 @@ dtb-$(CONFIG_EXYNOS5) += exynos5250-arndale.dtb \
 	exynos5800-peach-pi.dtb \
 	exynos5422-odroidxu3.dtb
 
-dtb-$(CONFIG_ARCH_IPQ807x) += ipq807x-hk01.dtb \
-	ipq807x-hk02.dtb \
-	ipq807x-hk06.dtb \
-	ipq807x-hk07.dtb \
-	ipq807x-hk08.dtb \
-	ipq807x-hk09.dtb \
-	ipq807x-hk10.dtb \
-	ipq807x-hk14.dtb \
-	ipq807x-hk11-c1.dtb \
-	ipq807x-ac01.dtb \
-	ipq807x-ac03.dtb \
-	ipq807x-ac04.dtb \
-	ipq807x-oak02.dtb \
-	ipq807x-hk01-c2.dtb \
-	ipq807x-hk01-c4.dtb \
-	ipq807x-hk01-c5.dtb \
-	ipq807x-hk10-c2.dtb
+dtb-$(CONFIG_ARCH_IPQ807x) += ipq807x-hk01.dtb
 
 dtb-$(CONFIG_ARCH_IPQ806x) += ipq806x-ap148.dtb \
 	ipq806x-ap160.dtb \
@@ -272,8 +256,40 @@ ifneq ($(CONFIG_OF_COMBINE),)
 %(obj)/%.dtb.comb.S: %(obj)/%.dtb
 	@:
 
+quiet_cmd_dtb_table = DTB_TABLE $@
+cmd_dtb_table = \
+	if ( \
+		echo '.section .dtb.combine_table,"a"'; \
+		echo '.balign 16'; \
+		echo '.global __dtb_table_start'; \
+		echo '__dtb_table_start:'; \
+		echo '.word $(words $(dtb-y))'; \
+		for dtb in $(dtb-y); do \
+			dts="$(kbuild-dir)/$${dtb%.dtb}.dts"; \
+			dtbmachid=`cat "$$dts" | grep machid | \
+				cut -f 2 -d '<' | cut -f 1 -d '>'`; \
+			if [ -z "$$dtbmachid" ]; then \
+				echo "Need to specify \"machid\" in dts $$dts" >&2; \
+				exit 1; \
+			fi; \
+			machiddec=`printf '%d' "$$dtbmachid" 2>/dev/null` || { \
+				echo "Invalid \"machid\" in dts $$dts" >&2; \
+				exit 1; \
+			}; \
+			echo ".extern __dtb_begin_$$machiddec "; \
+			echo ".word $$machiddec"; \
+			echo ".word __dtb_begin_$$machiddec "; \
+		done; \
+	) > $@.tmp; then \
+		mv $@.tmp $@; \
+	else \
+		status=$$?; \
+		rm -f $@.tmp; \
+		exit $$status; \
+	fi
+
 $(obj)/dtbtable.S: $(addsuffix .comb.o, $(addprefix $(obj)/, $(dtb-y)))
-	@:
+	$(call cmd,dtb_table)
 
 obj-y := dtbtable.o $(addsuffix .comb.o, $(dtb-y))
 

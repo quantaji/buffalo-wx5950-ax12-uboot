@@ -91,7 +91,11 @@
 #define GPIO_IN_OUT_ADDR(x)		(TLMM_BASE + 0x4 + (x)*0x1000)
 
 #define CONFIG_SYS_SDRAM_BASE           0x40000000
+#ifdef CONFIG_BUFFALO_WXR5950AX12_RAM_UBOOT
+#define CONFIG_SYS_TEXT_BASE            0x4A000000
+#else
 #define CONFIG_SYS_TEXT_BASE            0x4A900000
+#endif
 #define CONFIG_SYS_SDRAM_SIZE           0x10000000
 #define CONFIG_MAX_RAM_BANK_SIZE        CONFIG_SYS_SDRAM_SIZE
 #define CONFIG_SYS_LOAD_ADDR            (CONFIG_SYS_SDRAM_BASE + (64 << 20))
@@ -346,4 +350,3 @@ extern loff_t board_env_size;
 #undef CONFIG_IPQ_ROOTFS_AUTH
 
 #endif /* _IPQCDP_H */
-

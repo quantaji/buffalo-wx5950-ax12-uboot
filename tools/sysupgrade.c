@@ -44,6 +44,39 @@
 #define UBI_EC_HDR_MAGIC  0x55424923
 #define UBI_VID_HDR_MAGIC 0x55424921
 
+static size_t host_strlcpy(char *dest, const char *src, size_t size)
+{
+	size_t source_length = strlen(src);
+
+	if (size != 0) {
+		size_t copy_length = source_length >= size ? size - 1 : source_length;
+
+		memcpy(dest, src, copy_length);
+		dest[copy_length] = '\0';
+	}
+
+	return source_length;
+}
+
+static size_t host_strlcat(char *dest, const char *src, size_t size)
+{
+	size_t dest_length = strnlen(dest, size);
+	size_t source_length = strlen(src);
+	size_t copy_length;
+
+	if (dest_length == size)
+		return size + source_length;
+
+	copy_length = size - dest_length - 1;
+	if (copy_length > source_length)
+		copy_length = source_length;
+
+	memcpy(dest + dest_length, src, copy_length);
+	dest[dest_length + copy_length] = '\0';
+
+	return dest_length + source_length;
+}
+
 struct image_section sections[] = {
 	{
 		.section_type		= UBOOT_TYPE,
@@ -205,14 +238,14 @@ int get_sections(void)
 				continue;
 			if (!strncmp(file->d_name, sec->type, strlen(sec->type))) {
 				if (sec->pre_op) {
-					strlcat(sec->tmp_file, file->d_name,
+					host_strlcat(sec->tmp_file, file->d_name,
 							sizeof(sec->tmp_file));
 					if (!sec->pre_op(sec)) {
 						printf("Error extracting kernel from ubi\n");
 						return 0;
 					}
 				} else {
-					strlcat(sec->file, file->d_name,
+					host_strlcat(sec->file, file->d_name,
 							sizeof(sec->file));
 				}
 				if (!check_mbn_elf(&sec)) {
@@ -254,7 +287,7 @@ int load_sections(void)
 				continue;
 			if (!strncmp(file->d_name, sec->type, strlen(sec->type))) {
 				if (sec->pre_op) {
-					strlcat(sec->tmp_file, file->d_name,
+					host_strlcat(sec->tmp_file, file->d_name,
 							sizeof(sec->tmp_file));
 					if (!sec->pre_op(sec)) {
 						printf("Error extracting %s from ubi\n",
@@ -263,7 +296,7 @@ int load_sections(void)
 						return 0;
 					}
 				} else {
-					strlcat(sec->file, file->d_name,
+					host_strlcat(sec->file, file->d_name,
 							sizeof(sec->file));
 				}
 				sec->is_present = PRESENT;
@@ -410,7 +443,7 @@ char *find_value(char *buffer, char *search, int size)
 	for (i = 0; i < CERT_SIZE; i++) {
 		for (j = 0; search[j] && (buffer[i + j] == search[j]); j++);
 		if (search[j] == '\0') {
-			strlcpy(value, &buffer[i - size], size);
+			host_strlcpy(value, &buffer[i - size], size);
 			value[size - 1] = '\0';
 			return value;
 		}
@@ -1249,7 +1282,7 @@ int generate_hash(char *cert, char *sw_file, char *hw_file)
 		free(oem_model_id_str);
 		return 0;
 	}
-	strlcpy(sw_file, tmp, 32);
+	host_strlcpy(sw_file, tmp, 32);
 
 	generate_hwid_opad(hw_id_str, oem_id_str, oem_model_id_str, &hwid_xor_opad);
 	tmp = create_xor_ipad_opad(f_hw_xor, &hwid_xor_opad);
@@ -1260,7 +1293,7 @@ int generate_hash(char *cert, char *sw_file, char *hw_file)
 		free(oem_model_id_str);
 		return 0;
 	}
-	strlcpy(hw_file, tmp, 32);
+	host_strlcpy(hw_file, tmp, 32);
 
 	free(sw_id_str);
 	free(hw_id_str);

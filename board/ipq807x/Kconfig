@@ -10,6 +10,12 @@ config SYS_VENDOR
 config SYS_CONFIG_NAME
        default "ipq807x"
 
+config BUFFALO_WXR5950AX12_RAM_UBOOT
+	bool "Build Buffalo WXR-5950AX12 RAM U-Boot"
+	help
+	  Link the WXR-5950AX12 U-Boot payload at 0x4a000000 for
+	  loading through the recovery-compatible FIT bootm path.
+
 config IPQ807x_I2C
 	bool "Enable i2c support for ipq807x"
 

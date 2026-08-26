@@ -1,1 +1,4 @@
 *.dtb
+/dtbtable.S
+/*.dtb.S
+/*.dtb.comb.S
