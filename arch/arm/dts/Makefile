@@ -20,7 +20,11 @@ dtb-$(CONFIG_EXYNOS5) += exynos5250-arndale.dtb \
 	exynos5800-peach-pi.dtb \
 	exynos5422-odroidxu3.dtb
 
+ifeq ($(CONFIG_BUFFALO_WXR5950AX12),y)
+dtb-y += ipq807x-wxr5950ax12.dtb
+else
 dtb-$(CONFIG_ARCH_IPQ807x) += ipq807x-hk01.dtb
+endif
 
 dtb-$(CONFIG_ARCH_IPQ806x) += ipq806x-ap148.dtb \
 	ipq806x-ap160.dtb \

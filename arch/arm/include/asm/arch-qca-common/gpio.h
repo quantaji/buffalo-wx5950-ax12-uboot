@@ -48,13 +48,17 @@ struct qca_gpio_config {
 
 void gpio_tlmm_config(struct qca_gpio_config *gpio_config);
 
-void gpio_set_value(unsigned int gpio, unsigned int out);
+int gpio_set_value(unsigned int gpio, int out);
 
 int gpio_get_value(unsigned int gpio);
 
+int gpio_request(unsigned int gpio, const char *label);
+int gpio_free(unsigned int gpio);
+int gpio_direction_input(unsigned int gpio);
+int gpio_direction_output(unsigned int gpio, int out);
+
 int qca_gpio_init(int offset);
 int qca_gpio_deinit(int offset);
-void gpio_direction_output(unsigned int gpio, unsigned int out);
 
 /* GPIO TLMM: Output value */
 #define GPIO_OUT_LOW	0

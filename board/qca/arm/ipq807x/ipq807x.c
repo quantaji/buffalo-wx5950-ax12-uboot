@@ -682,9 +682,11 @@ void eth_clock_enable(void)
 	/*this is for ext oscillator clk for ref clk-*/
 	check_uniphy_ext_ref_clk();
 
-	/* bring phy out of reset */
+	/* MDIO uses GPIO68 and GPIO69 with function 1. */
 	writel(7, tlmm_base + 0x1f000);
 	writel(7, tlmm_base + 0x20000);
+#ifndef CONFIG_BUFFALO_WXR5950AX12
+	/* bring phy out of reset */
 	writel(0x203, tlmm_base);
 	writel(0, tlmm_base + 0x4);
 	aquantia_phy_reset_init();
@@ -695,6 +697,7 @@ void eth_clock_enable(void)
 	aquantia_phy_reset_init_done();
 	napa_phy_reset_init_done();
 	mdelay(500);
+#endif
 }
 
 int board_eth_init(bd_t *bis)
@@ -702,6 +705,11 @@ int board_eth_init(bd_t *bis)
 	int ret=0;
 
 	eth_clock_enable();
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	ret = wxr5950ax12_prepare_phy_init();
+	if (ret)
+		return ret;
+#endif
 	ret = ipq807x_edma_init(NULL);
 
 	if (ret != 0)
@@ -779,6 +787,37 @@ void board_nand_init(void)
 #endif
 }
 
+void ipq807x_pcie_v2_clock_init(int id)
+{
+	if (id != 0)
+		return;
+
+	writel(0x2, GCC_PCIE0_V2_AUX_CMD_RCGR);
+	writel(0x107, GCC_PCIE0_AXI_CFG_RCGR);
+	writel(0x1, GCC_PCIE0_V2_AXI_CMD_RCGR);
+	mdelay(100);
+	writel(0x2, GCC_PCIE0_V2_AXI_CMD_RCGR);
+	writel(0x20000001, GCC_PCIE0_AHB_CBCR);
+	writel(0x4FF1, GCC_PCIE0_AXI_M_CBCR);
+	writel(0x20004FF1, GCC_PCIE0_AXI_S_CBCR);
+	writel(0x1, GCC_PCIE0_AUX_CBCR);
+	writel(0x80004FF1, GCC_PCIE0_PIPE_CBCR);
+	writel(0x1, GCC_PCIE0_AXI_S_BRIDGE_CBCR);
+	writel(0x10F, GCC_PCIE0_RCHNG_CFG_RCGR);
+	writel(0x3, GCC_PCIE0_RCHNG_CMD_RCGR);
+
+	writel(0x2, GCC_PCIE1_V2_AUX_CMD_RCGR);
+	writel(0x107, GCC_PCIE1_AXI_CFG_RCGR);
+	writel(0x1, GCC_PCIE1_V2_AXI_CMD_RCGR);
+	mdelay(100);
+	writel(0x2, GCC_PCIE1_V2_AXI_CMD_RCGR);
+	writel(0x20000001, GCC_PCIE1_AHB_CBCR);
+	writel(0x4FF1, GCC_PCIE1_AXI_M_CBCR);
+	writel(0x20004FF1, GCC_PCIE1_AXI_S_CBCR);
+	writel(0x1, GCC_PCIE1_AUX_CBCR);
+	writel(0x80004FF1, GCC_PCIE1_PIPE_CBCR);
+}
+
 #ifdef CONFIG_PCI_IPQ
 static void pcie_clock_init(int id)
 {
@@ -808,39 +847,6 @@ static void pcie_clock_init(int id)
 		pci_initialised = 1;
 	}
 }
-
-static void pcie_v2_clock_init(int id)
-{
-
-	/* Enable PCIE CLKS */
-	if (id == 0) {
-		writel(0x2, GCC_PCIE0_V2_AUX_CMD_RCGR);
-		writel(0x107, GCC_PCIE0_AXI_CFG_RCGR);
-		writel(0x1, GCC_PCIE0_V2_AXI_CMD_RCGR);
-		mdelay(100);
-		writel(0x2, GCC_PCIE0_V2_AXI_CMD_RCGR);
-		writel(0x20000001, GCC_PCIE0_AHB_CBCR);
-		writel(0x4FF1, GCC_PCIE0_AXI_M_CBCR);
-		writel(0x20004FF1, GCC_PCIE0_AXI_S_CBCR);
-		writel(0x1, GCC_PCIE0_AUX_CBCR);
-		writel(0x80004FF1, GCC_PCIE0_PIPE_CBCR);
-		writel(0x1, GCC_PCIE0_AXI_S_BRIDGE_CBCR);
-		writel(0x10F, GCC_PCIE0_RCHNG_CFG_RCGR);
-		writel(0x3, GCC_PCIE0_RCHNG_CMD_RCGR);
-
-		writel(0x2, GCC_PCIE1_V2_AUX_CMD_RCGR);
-		writel(0x107, GCC_PCIE1_AXI_CFG_RCGR);
-		writel(0x1, GCC_PCIE1_V2_AXI_CMD_RCGR);
-		mdelay(100);
-		writel(0x2, GCC_PCIE1_V2_AXI_CMD_RCGR);
-		writel(0x20000001, GCC_PCIE1_AHB_CBCR);
-		writel(0x4FF1, GCC_PCIE1_AXI_M_CBCR);
-		writel(0x20004FF1, GCC_PCIE1_AXI_S_CBCR);
-		writel(0x1, GCC_PCIE1_AUX_CBCR);
-		writel(0x80004FF1, GCC_PCIE1_PIPE_CBCR);
-	}
-}
-
 static void pcie_v2_clock_deinit(int id)
 {
 
@@ -915,7 +921,7 @@ void board_pci_init(int id)
 	if (gpio_node >= 0)
 		qca_gpio_init(gpio_node);
 	if(soc_ver_major == 2)
-		pcie_v2_clock_init(id);
+		ipq807x_pcie_v2_clock_init(id);
 	else
 		pcie_clock_init(id);
 	return;
@@ -1254,6 +1260,10 @@ int ipq_board_usb_init(void)
 {
 	int i;
 
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	if (wxr5950ax12_usb_vbus_enable())
+		return -EINVAL;
+#endif
 	for (i=0; i<CONFIG_USB_MAX_CONTROLLER_COUNT; i++) {
 		usb_clock_init(i);
 		usb_init_phy(i);

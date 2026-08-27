@@ -344,6 +344,12 @@ config CMD_USB
 	help
 	  USB support.
 
+config CMD_FAT
+	bool "fat"
+	depends on FS_FAT
+	help
+	  FAT filesystem information, listing and file loading commands.
+
 config CMD_FPGA
 	bool "fpga"
 	default y

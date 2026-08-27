@@ -219,7 +219,9 @@ int board_init(void)
 		printf("WARN: ipq_board_usb_init failed\n");
 	}
 
+#ifndef CONFIG_BUFFALO_WXR5950AX12
 	aquantia_phy_reset_init();
+#endif
 	disable_audio_clks();
 	ipq_uboot_fdt_fixup();
 	/*

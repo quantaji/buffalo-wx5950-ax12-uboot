@@ -773,14 +773,14 @@ void qca8075_phy_interface_set_mode(u32 phy_id, u32 mode)
 				phy_id + QCA8075_PHY_MAX_ADDR_INC,
 				QCA8075_PHY_CHIP_CONFIG,
 				phy_data | mode);
-		qca8075_phy_serdes_reset(0);
+		qca8075_phy_serdes_reset(phy_id);
 	}
 }
 
-int ipq_qca8075_phy_init(struct phy_ops **ops)
+int ipq_qca8075_phy_init_at(struct phy_ops **ops, u32 package_base)
 {
 	u16 phy_data;
-	u32 phy_id = 0;
+	u32 phy_id = package_base;
 
 	qca8075_ops = (struct phy_ops *)malloc(sizeof(struct phy_ops));
 	if (!qca8075_ops)
@@ -791,17 +791,21 @@ int ipq_qca8075_phy_init(struct phy_ops **ops)
 	qca8075_ops->phy_get_duplex = qca8075_phy_get_duplex;
 	*ops = qca8075_ops;
 
-	qca8075_id = phy_data = qca8075_phy_reg_read(0x0, 0x0, QCA8075_PHY_ID1);
+	qca8075_id = phy_data = qca8075_phy_reg_read(0, package_base,
+						      QCA8075_PHY_ID1);
 	printf ("PHY ID1: 0x%x\n", phy_data);
-	phy_data = qca8075_phy_reg_read(0x0, 0x0, QCA8075_PHY_ID2);
+	phy_data = qca8075_phy_reg_read(0, package_base, QCA8075_PHY_ID2);
 	printf ("PHY ID2: 0x%x\n", phy_data);
 	qca8075_id = (qca8075_id << 16) | phy_data;
 
 	if (qca8075_id == QCA8075_PHY_V1_0_5P) {
-		phy_data = qca8075_phy_mmd_read(0, PSGMII_ID,
+		phy_data = qca8075_phy_mmd_read(0,
+			package_base + QCA8075_PHY_PSGMII_ADDR_INC,
 			QCA8075_PHY_MMD1_NUM, QCA8075_PSGMII_FIFI_CTRL);
 		phy_data &= 0xbfff;
-		qca8075_phy_mmd_write(0, PSGMII_ID, QCA8075_PHY_MMD1_NUM,
+		qca8075_phy_mmd_write(0,
+			package_base + QCA8075_PHY_PSGMII_ADDR_INC,
+			QCA8075_PHY_MMD1_NUM,
 			QCA8075_PSGMII_FIFI_CTRL, phy_data);
 	}
 
@@ -809,12 +813,12 @@ int ipq_qca8075_phy_init(struct phy_ops **ops)
 	 * Enable phy power saving function by default
 	 */
 	if (qca8075_id == QCA8075_PHY_V1_1_2P)
-		phy_id = 3;
+		phy_id = package_base + 3;
 
 	if ((qca8075_id == QCA8075_PHY_V1_0_5P) ||
 	    (qca8075_id == QCA8075_PHY_V1_1_5P) ||
 	    (qca8075_id == QCA8075_PHY_V1_1_2P)) {
-		for (; phy_id < 5; phy_id++) {
+		for (; phy_id < package_base + 5; phy_id++) {
 			/*enable phy power saving function by default */
 			qca8075_phy_set_8023az(0x0, phy_id, 0x1);
 			qca8075_phy_set_powersave(0x0, phy_id, 0x1);
@@ -844,18 +848,31 @@ int ipq_qca8075_phy_init(struct phy_ops **ops)
 	/*
 	 * Enable AZ transmitting ability
 	 */
-	qca8075_phy_mmd_write(0, PSGMII_ID, QCA8075_PHY_MMD1_NUM,
+	qca8075_phy_mmd_write(0,
+			package_base + QCA8075_PHY_PSGMII_ADDR_INC,
+			QCA8075_PHY_MMD1_NUM,
 				QCA8075_PSGMII_MODE_CTRL,
 				QCA8075_PHY_PSGMII_MODE_CTRL_ADJUST_VALUE);
 
 	/* adjust psgmii serdes tx amp */
-	qca8075_phy_reg_write(0, 5, QCA8075_PSGMII_TX_DRIVER_1_CTRL,
+	qca8075_phy_reg_write(0,
+			package_base + QCA8075_PHY_PSGMII_ADDR_INC,
+			QCA8075_PSGMII_TX_DRIVER_1_CTRL,
 				QCA8075_PHY_PSGMII_REDUCE_SERDES_TX_AMP);
 
 	/* to avoid psgmii module goes into hibernation, work with psgmii self test*/
-	phy_data = qca8075_phy_mmd_read(0, 4, QCA8075_PHY_MMD3_NUM, 0x805a);
+	phy_data = qca8075_phy_mmd_read(0,
+			package_base + QCA8075_PHY_MAX_ADDR_INC,
+			QCA8075_PHY_MMD3_NUM, 0x805a);
 	phy_data &= (~(1 << 1));
-	qca8075_phy_mmd_write(0, 4, QCA8075_PHY_MMD3_NUM, 0x805a, phy_data);
+	qca8075_phy_mmd_write(0,
+			package_base + QCA8075_PHY_MAX_ADDR_INC,
+			QCA8075_PHY_MMD3_NUM, 0x805a, phy_data);
 
 	return 0;
+}
+
+int ipq_qca8075_phy_init(struct phy_ops **ops)
+{
+	return ipq_qca8075_phy_init_at(ops, 0);
 }

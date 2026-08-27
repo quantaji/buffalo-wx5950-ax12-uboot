@@ -46,6 +46,7 @@
 #define AQUANTIA_PHY_112			0x03a1b660
 #define AQUANTIA_PHY_111B0			0x03a1b612
 #define AQUANTIA_PHY_112C			0x03a1b792
+#define AQUANTIA_PHY_113C			0x31c31c12
 #define AQU_PHY_ADDR				0x7
 #define QCA_PHY_ID1				0x2
 #define QCA_PHY_ID2				0x3
@@ -98,6 +99,8 @@ enum port_wrapper_cfg {
 	PORT_WRAPPER_10GBASE_R,
 	PORT_WRAPPER_SGMII_FIBER,
 };
+
+#define PORT_WRAPPER_UNUSED			0xff
 
 enum phy_mode {
 	MALIBU_PHY_TYPE = 1,

@@ -168,7 +168,7 @@ def verify_build_layout(build_dir):
     raw_path = build_dir / "u-boot.bin"
     map_path = build_dir / "u-boot.map"
     config_path = build_dir / ".config"
-    control_dtb = build_dir / "arch/arm/dts/ipq807x-hk01.dtb"
+    control_dtb = build_dir / "arch/arm/dts/ipq807x-wxr5950ax12.dtb"
     dumpimage = build_dir / "tools/dumpimage"
 
     for required_path in (
@@ -332,7 +332,7 @@ def verify_fit(fit_path, build_context):
     with tempfile.TemporaryDirectory(prefix="verify-ram-uboot.") as temp_name:
         temp_dir = pathlib.Path(temp_name)
         extracted_kernel = temp_dir / "u-boot.bin.gz"
-        extracted_dtb = temp_dir / "ipq807x-hk01.dtb"
+        extracted_dtb = temp_dir / "ipq807x-wxr5950ax12.dtb"
 
         subprocess.check_call(
             [

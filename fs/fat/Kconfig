@@ -1,0 +1,5 @@
+config FS_FAT
+	bool "FAT filesystem support"
+	help
+	  Enable read-only access to FAT filesystems. Writing remains disabled
+	  unless FAT_WRITE is selected separately.

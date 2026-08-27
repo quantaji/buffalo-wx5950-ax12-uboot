@@ -44,9 +44,29 @@ DECLARE_GLOBAL_DATA_PTR;
 
 static struct ipq807x_eth_dev *ipq807x_edma_dev[IPQ807X_EDMA_DEV];
 
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+struct ipq807x_aqr_port_state {
+	bool configured;
+	fal_port_speed_t speed;
+	fal_port_duplex_t duplex;
+};
+
+static struct ipq807x_aqr_port_state aqr_port_state[PHY_MAX];
+
+struct ipq807x_port_phy_info {
+	u32 port_id;
+	u32 present;
+	const char *label;
+	u32 phy_address;
+	u32 phy_type;
+};
+
+static struct ipq807x_port_phy_info phy_info[PHY_MAX];
+#else
 uchar ipq807x_def_enetaddr[6] = {0x00, 0x03, 0x7F, 0xBA, 0xDB, 0xAD};
 phy_info_t *phy_info[PHY_MAX] = {0};
 int sgmii_mode[2] = {0};
+#endif
 
 extern void qca8075_ess_reset(void);
 extern void psgmii_self_test(void);
@@ -56,13 +76,17 @@ extern void ipq_qca8075_dump_phy_regs(u32);
 extern int ipq_mdio_read(int mii_id,
 		int regnum, ushort *data);
 extern void ipq_qca8075_phy_map_ops(struct phy_ops **ops);
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+extern int ipq_qca8075_phy_init_at(struct phy_ops **ops, u32 package_base);
+#else
 extern int ipq_qca8075_phy_init(struct phy_ops **ops);
+extern int ipq_board_fw_download(unsigned int phy_addr);
+#endif
 extern void qca8075_phy_interface_set_mode(uint32_t phy_id,
 		uint32_t mode);
 extern int ipq_qca8033_phy_init(struct phy_ops **ops, u32 phy_id);
 extern int ipq_qca8081_phy_init(struct phy_ops **ops, u32 phy_id);
 extern int ipq_qca_aquantia_phy_init(struct phy_ops **ops, u32 phy_id);
-extern int ipq_board_fw_download(unsigned int phy_addr);
 static int tftp_acl_our_port;
 
 /*
@@ -859,6 +883,244 @@ static void ipq807x_edma_disable_intr(struct ipq807x_edma_hw *ehw)
 				IPQ807X_EDMA_MASK_INT_DISABLE);
 }
 
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+static int ipq807x_eth_init(struct eth_device *eth_dev, bd_t *this)
+{
+	struct ipq807x_eth_dev *priv = eth_dev->priv;
+	struct ipq807x_edma_common_info *c_info = priv->c_info;
+	struct ipq807x_edma_hw *ehw = &c_info->hw;
+	int i;
+	uint32_t data;
+	u8 status;
+	struct phy_ops *phy_get_ops;
+	fal_port_speed_t speed;
+	fal_port_duplex_t duplex;
+	char *lstatus[] = {"up", "Down"};
+	char *dp[] = {"Half", "Full"};
+	int linkup=0;
+	int mac_speed = 0, speed_clock1 = 0, speed_clock2 = 0;
+	int phy_addr;
+	int ret;
+	/*
+	 * Check PHY link, speed, Duplex on all phys.
+	 * we will proceed even if single link is up
+	 * else we will return with -1;
+	 */
+	for (i =  0; i < PHY_MAX; i++) {
+		if (!phy_info[i].present)
+			continue;
+		if (!priv->ops[i]) {
+			printf("WXR %s PHY operations are not mapped\n",
+			       phy_info[i].label);
+			return -EINVAL;
+		}
+		phy_get_ops = priv->ops[i];
+		if (!phy_get_ops->phy_get_link_status ||
+		    !phy_get_ops->phy_get_speed ||
+		    !phy_get_ops->phy_get_duplex) {
+			printf("WXR %s PHY operations are incomplete\n",
+			       phy_info[i].label);
+			return -EINVAL;
+		}
+
+		phy_addr = phy_info[i].phy_address;
+		status = phy_get_ops->phy_get_link_status(priv->mac_unit,
+						      phy_addr);
+		if (status != 0) {
+			printf("PPE%d %s: link down\n", phy_info[i].port_id,
+			       phy_info[i].label);
+			if (phy_info[i].phy_type == AQ_PHY_TYPE) {
+				if (aqr_port_state[i].configured) {
+					ipq807x_uxsgmii_port_disable(i);
+					aqr_port_state[i].configured = false;
+				} else {
+					ppe_port_bridge_txmac_set(i + 1, status);
+				}
+			} else {
+				ppe_port_bridge_txmac_set(i + 1, status);
+			}
+			continue;
+		}
+
+		ret = phy_get_ops->phy_get_speed(priv->mac_unit, phy_addr, &speed);
+		if (ret)
+			return ret;
+		ret = phy_get_ops->phy_get_duplex(priv->mac_unit, phy_addr,
+						 &duplex);
+		if (ret)
+			return ret;
+
+		switch (speed) {
+			case FAL_SPEED_10:
+				if (phy_info[i].phy_type == AQ_PHY_TYPE) {
+					puts("10M speed not supported on WXR AQR113C\n");
+					if (aqr_port_state[i].configured) {
+						ipq807x_uxsgmii_port_disable(i);
+						aqr_port_state[i].configured = false;
+					} else {
+						ppe_port_bridge_txmac_set(i + 1, 1);
+					}
+					continue;
+				}
+				mac_speed = 0x0;
+				speed_clock1 = 0x109;
+				speed_clock2 = 0x9;
+				printf ("eth%d PHY%d %s Speed :%d %s duplex\n",
+						priv->mac_unit, i, lstatus[status], speed,
+						dp[duplex]);
+				break;
+			case FAL_SPEED_100:
+				mac_speed = 0x1;
+				if (phy_info[i].phy_type == AQ_PHY_TYPE) {
+					if (i == 4)
+						speed_clock1 = 0x309;
+					else
+						speed_clock1 = 0x109;
+				} else {
+					speed_clock1 = 0x101;
+				}
+				speed_clock2 = 0x4;
+				printf ("eth%d PHY%d %s Speed :%d %s duplex\n",
+						priv->mac_unit, i, lstatus[status], speed,
+						dp[duplex]);
+				break;
+			case FAL_SPEED_1000:
+				mac_speed = 0x2;
+				if (phy_info[i].phy_type == AQ_PHY_TYPE) {
+					if (i == 4)
+						speed_clock1 = 0x304;
+					else
+						speed_clock1 = 0x104;
+				} else
+					speed_clock1 = 0x101;
+				speed_clock2 = 0x0;
+				printf ("eth%d PHY%d %s Speed :%d %s duplex\n",
+						priv->mac_unit, i, lstatus[status], speed,
+						dp[duplex]);
+				break;
+			case FAL_SPEED_10000:
+				mac_speed = 0x3;
+				if (i == 4)
+					speed_clock1 = 0x301;
+				else
+					speed_clock1 = 0x101;
+				speed_clock2 = 0x0;
+				printf ("eth%d PHY%d %s Speed :%d %s duplex\n",
+						priv->mac_unit, i, lstatus[status], speed,
+						dp[duplex]);
+				break;
+			case FAL_SPEED_2500:
+				if (phy_info[i].phy_type != AQ_PHY_TYPE)
+					return -EINVAL;
+				mac_speed = 0x4;
+				if (i == 4) {
+					speed_clock1 = 0x301;
+					speed_clock2 = 0x3;
+				} else {
+					speed_clock1 = 0x107;
+					speed_clock2 = 0x0;
+				}
+				printf ("eth%d PHY%d %s Speed :%d %s duplex\n",
+						priv->mac_unit, i, lstatus[status], speed,
+						dp[duplex]);
+				break;
+			case FAL_SPEED_5000:
+				mac_speed = 0x5;
+				if (i == 4) {
+					speed_clock1 = 0x301;
+					speed_clock2 = 0x1;
+				} else {
+					speed_clock1 = 0x103;
+					speed_clock2 = 0x0;
+				}
+				printf ("eth%d PHY%d %s Speed :%d %s duplex\n",
+						priv->mac_unit, i, lstatus[status], speed,
+						dp[duplex]);
+				break;
+			default:
+				printf("WXR %s PHY reported unsupported speed %d\n",
+				       phy_info[i].label, speed);
+				return -EINVAL;
+		}
+
+		if (phy_info[i].phy_type == AQ_PHY_TYPE) {
+			if (!aqr_port_state[i].configured ||
+			    aqr_port_state[i].speed != speed ||
+			    aqr_port_state[i].duplex != duplex) {
+				if (aqr_port_state[i].configured) {
+					ipq807x_uxsgmii_port_disable(i);
+					aqr_port_state[i].configured = false;
+				}
+				ipq807x_speed_clock_set(i, speed_clock1,
+						       speed_clock2);
+				ret = ipq807x_uxsgmii_speed_set(i, mac_speed,
+							       duplex, status);
+				if (ret)
+					return ret;
+				aqr_port_state[i].speed = speed;
+				aqr_port_state[i].duplex = duplex;
+				aqr_port_state[i].configured = true;
+			}
+		} else {
+			ipq807x_speed_clock_set(i, speed_clock1, speed_clock2);
+			ipq807x_pqsgmii_speed_set(i, mac_speed, status);
+		}
+		linkup++;
+	}
+
+	if (linkup <= 0) {
+		/* No PHY link is alive */
+		return -1;
+	}
+
+	/*
+	 * Alloc Rx buffers
+	 */
+	ipq807x_edma_alloc_rx_buffer(ehw, ehw->rxfill_ring);
+
+	/*
+	 * Set DMA request priority
+	 */
+	ipq807x_edma_reg_write(IPQ807X_EDMA_REG_DMAR_CTRL,
+		(1 & IPQ807X_EDMA_DMAR_REQ_PRI_MASK) <<
+		IPQ807X_EDMA_DMAR_REQ_PRI_SHIFT);
+
+	/*
+	 * Enable EDMA
+	 */
+	ipq807x_edma_reg_write(IPQ807X_EDMA_REG_PORT_CTRL,
+				 IPQ807X_EDMA_PORT_CTRL_EN);
+
+	/*
+	 * Enable Rx rings
+	 */
+	for (i = ehw->rxdesc_ring_start; i < ehw->rxdesc_ring_end; i++) {
+		data = ipq807x_edma_reg_read(IPQ807X_EDMA_REG_RXDESC_CTRL(i));
+		data |= IPQ807X_EDMA_RXDESC_RX_EN;
+		ipq807x_edma_reg_write(IPQ807X_EDMA_REG_RXDESC_CTRL(i), data);
+	}
+
+	for (i = ehw->rxfill_ring_start; i < ehw->rxfill_ring_end; i++) {
+		data = ipq807x_edma_reg_read(IPQ807X_EDMA_REG_RXFILL_RING_EN(i));
+		data |= IPQ807X_EDMA_RXFILL_RING_EN;
+		ipq807x_edma_reg_write(IPQ807X_EDMA_REG_RXFILL_RING_EN(i), data);
+	}
+
+	/*
+	 * Enable Tx rings
+	 */
+	for (i = ehw->txdesc_ring_start; i < ehw->txdesc_ring_end; i++) {
+		data = ipq807x_edma_reg_read(IPQ807X_EDMA_REG_TXDESC_CTRL(i));
+		data |= IPQ807X_EDMA_TXDESC_TX_EN;
+		ipq807x_edma_reg_write(IPQ807X_EDMA_REG_TXDESC_CTRL(i), data);
+	}
+
+	pr_info("%s: done\n", __func__);
+
+	return 0;
+}
+
+#else
 static void set_sgmii_mode(int port_id, int sg_mode)
 {
 	if (port_id == 4)
@@ -1151,6 +1413,8 @@ static int ipq807x_eth_init(struct eth_device *eth_dev, bd_t *this)
 
 	return 0;
 }
+
+#endif
 
 static int ipq807x_edma_wr_macaddr(struct eth_device *dev)
 {
@@ -1568,7 +1832,9 @@ int ipq807x_edma_hw_init(struct ipq807x_edma_hw *ehw)
 
 	struct ipq807x_edma_rxdesc_ring *rxdesc_ring = NULL;
 
-	ipq807x_ppe_provision_init();
+	ret = ipq807x_ppe_provision_init();
+	if (ret)
+		return ret;
 
 	data = ipq807x_edma_reg_read(IPQ807X_EDMA_REG_MAS_CTRL);
 	printf("EDMA ver %d hw init\n", data);
@@ -1701,6 +1967,114 @@ int ipq807x_edma_hw_init(struct ipq807x_edma_hw *ehw)
 	return 0;
 }
 
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+static int read_phy_topology(int offset)
+{
+	const char *label;
+	int len;
+	int i = 0;
+	int j;
+
+	memset(phy_info, 0, sizeof(phy_info));
+	for (offset = fdt_first_subnode(gd->fdt_blob, offset); offset > 0;
+	     offset = fdt_next_subnode(gd->fdt_blob, offset)) {
+		if (i >= PHY_MAX) {
+			puts("WXR Ethernet topology has more than six ports\n");
+			return -EINVAL;
+		}
+
+		phy_info[i].port_id = fdtdec_get_uint(gd->fdt_blob, offset,
+						       "port_id", 0);
+		phy_info[i].present = fdtdec_get_uint(gd->fdt_blob, offset,
+						       "present", 2);
+		phy_info[i].phy_address = fdtdec_get_uint(gd->fdt_blob, offset,
+							   "phy_address",
+							   0xfffffffe);
+		phy_info[i].phy_type = fdtdec_get_uint(gd->fdt_blob, offset,
+							"phy_type", 0xffffffff);
+		label = fdt_getprop(gd->fdt_blob, offset, "label", &len);
+		if (!label || len <= 1)
+			return -EINVAL;
+		phy_info[i].label = label;
+
+		if (phy_info[i].port_id != i + 1 ||
+		    phy_info[i].present != (i != 0)) {
+			printf("WXR Ethernet topology mismatch at slot %d\n", i + 1);
+			return -EINVAL;
+		}
+		if (phy_info[i].present &&
+		    (phy_info[i].phy_address > 0x1f ||
+		     (phy_info[i].phy_type != MALIBU_PHY_TYPE &&
+		      phy_info[i].phy_type != AQ_PHY_TYPE))) {
+			printf("WXR Ethernet PHY description is invalid at slot %d\n",
+			       i + 1);
+			return -EINVAL;
+		}
+		i++;
+	}
+
+	if (i != PHY_MAX) {
+		printf("WXR Ethernet topology has %d ports, expected %d\n",
+		       i, PHY_MAX);
+		return -EINVAL;
+	}
+
+	for (i = 0; i < PHY_MAX; i++) {
+		if (!phy_info[i].present)
+			continue;
+		for (j = i + 1; j < PHY_MAX; j++) {
+			if (phy_info[j].present &&
+			    phy_info[i].phy_address == phy_info[j].phy_address) {
+				printf("WXR Ethernet PHY address 0x%x is duplicated\n",
+				       phy_info[i].phy_address);
+				return -EINVAL;
+			}
+		}
+	}
+
+	return 0;
+}
+
+static u32 ipq807x_phy_id(const struct ipq807x_port_phy_info *port)
+{
+	u32 id1_reg = QCA_PHY_ID1;
+	u32 id2_reg = QCA_PHY_ID2;
+	u32 id1;
+	u32 id2;
+
+	if (port->phy_type == AQ_PHY_TYPE) {
+		id1_reg |= (1 << 30) | (1 << 16);
+		id2_reg |= (1 << 30) | (1 << 16);
+	}
+	id1 = ipq_mdio_read(port->phy_address, id1_reg, NULL);
+	id2 = ipq_mdio_read(port->phy_address, id2_reg, NULL);
+
+	return (id1 << 16) | id2;
+}
+
+static int ipq807x_wait_phy(const struct ipq807x_port_phy_info *port,
+			    u32 *phy_id)
+{
+	int attempt;
+
+	for (attempt = 0; attempt < 50; attempt++) {
+		*phy_id = ipq807x_phy_id(port);
+		if ((port->phy_type == MALIBU_PHY_TYPE &&
+		     (*phy_id == QCA8075_PHY_V1_0_5P ||
+		      *phy_id == QCA8075_PHY_V1_1_5P ||
+		      *phy_id == QCA8075_PHY_V1_1_2P)) ||
+		    (port->phy_type == AQ_PHY_TYPE &&
+		     *phy_id == AQUANTIA_PHY_113C))
+			return 0;
+		mdelay(100);
+	}
+
+	printf("WXR %s PHY at 0x%x did not report its expected ID; last 0x%08x\n",
+	       port->label, port->phy_address, *phy_id);
+	return -ETIMEDOUT;
+}
+
+#else
 void get_phy_address(int offset)
 {
 	int phy_type;
@@ -1722,6 +2096,208 @@ void get_phy_address(int offset)
 	}
 }
 
+#endif
+
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+int ipq807x_edma_init(void *edma_board_cfg)
+{
+	struct eth_device *dev[IPQ807X_EDMA_DEV];
+	struct ipq807x_edma_common_info *c_info[IPQ807X_EDMA_DEV];
+	struct ipq807x_edma_hw *hw[IPQ807X_EDMA_DEV];
+	uchar enet_addr[IPQ807X_EDMA_DEV * 6];
+	int i, phy_id;
+	uint32_t phy_chip_id;
+	int ret = -1;
+	ipq807x_edma_board_cfg_t ledma_cfg, *edma_cfg;
+	static int sw_init_done = 0;
+	int node, phy_addr;
+	int mode, phy_node = -1;
+	u32 qca8075_package_base;
+
+	node = fdt_path_offset(gd->fdt_blob, "/ess-switch");
+	if (node < 0) {
+		puts("Error: ess-switch not specified in dts\n");
+		return node;
+	}
+
+	phy_node = fdt_path_offset(gd->fdt_blob, "/ess-switch/port_phyinfo");
+	if (phy_node < 0) {
+		puts("Error: WXR port_phyinfo not specified in dts\n");
+		return phy_node;
+	}
+	ret = read_phy_topology(phy_node);
+	if (ret)
+		return ret;
+
+	qca8075_package_base = fdtdec_get_uint(gd->fdt_blob, node,
+						"qca8075_package_base",
+						0xffffffff);
+	if (qca8075_package_base != 0x18) {
+		puts("Error: WXR QCA8075 package base must be 0x18\n");
+		return -EINVAL;
+	}
+
+	mode = fdtdec_get_uint(gd->fdt_blob, node, "switch_mac_mode", -1);
+	if (mode != PORT_WRAPPER_PSGMII) {
+		puts("Error: WXR QCA8075 interface must use PSGMII\n");
+		return -EINVAL;
+	}
+
+	memset(c_info, 0, (sizeof(c_info) * IPQ807X_EDMA_DEV));
+	memset(dev, 0, sizeof(dev));
+	memset(hw, 0, sizeof(hw));
+	memset(enet_addr, 0, sizeof(enet_addr));
+	memset(&ledma_cfg, 0, sizeof(ledma_cfg));
+	edma_cfg = &ledma_cfg;
+	strlcpy(edma_cfg->phy_name, "IPQ MDIO0", sizeof(edma_cfg->phy_name));
+
+	/* WXR uses the APPSBLENV ethaddr selected during board_late_init(). */
+	ret = eth_getenv_enetaddr("ethaddr", enet_addr) ? 0 : -EINVAL;
+	if (ret) {
+		puts("WXR Ethernet registration refused: ethaddr is invalid\n");
+		return ret;
+	}
+
+	/*
+	 * Register EDMA as single ethernet
+	 * interface.
+	 */
+	for (i = 0; i < IPQ807X_EDMA_DEV; edma_cfg++, i++) {
+		dev[i] = ipq807x_alloc_mem(sizeof(struct eth_device));
+
+		if (!dev[i])
+			goto init_failed;
+
+		memset(dev[i], 0, sizeof(struct eth_device));
+
+		c_info[i] = ipq807x_alloc_mem(
+			sizeof(struct ipq807x_edma_common_info));
+
+		if (!c_info[i])
+			goto init_failed;
+
+		memset(c_info[i], 0,
+			sizeof(struct ipq807x_edma_common_info));
+
+		hw[i] = &c_info[i]->hw;
+
+		c_info[i]->hw.hw_addr = (unsigned long  __iomem *)
+						IPQ807X_EDMA_CFG_BASE;
+
+		ipq807x_edma_dev[i] = ipq807x_alloc_mem(
+				sizeof(struct ipq807x_eth_dev));
+
+		if (!ipq807x_edma_dev[i])
+			goto init_failed;
+
+		memset (ipq807x_edma_dev[i], 0,
+			sizeof(struct ipq807x_eth_dev));
+
+		dev[i]->iobase = IPQ807X_EDMA_CFG_BASE;
+		dev[i]->init = ipq807x_eth_init;
+		dev[i]->halt = ipq807x_eth_halt;
+		dev[i]->recv = ipq807x_eth_recv;
+		dev[i]->send = ipq807x_eth_snd;
+		dev[i]->write_hwaddr = ipq807x_edma_wr_macaddr;
+		dev[i]->priv = (void *)ipq807x_edma_dev[i];
+
+		memcpy(dev[i]->enetaddr, &enet_addr[edma_cfg->unit * 6], 6);
+
+		printf("MAC%x addr:%x:%x:%x:%x:%x:%x\n",
+			edma_cfg->unit, dev[i]->enetaddr[0],
+			dev[i]->enetaddr[1],
+			dev[i]->enetaddr[2],
+			dev[i]->enetaddr[3],
+			dev[i]->enetaddr[4],
+			dev[i]->enetaddr[5]);
+
+		snprintf(dev[i]->name, sizeof(dev[i]->name), "eth%d", i);
+
+		ipq807x_edma_dev[i]->dev  = dev[i];
+		ipq807x_edma_dev[i]->mac_unit = edma_cfg->unit;
+		ipq807x_edma_dev[i]->c_info = c_info[i];
+		ipq807x_edma_hw_addr = IPQ807X_EDMA_CFG_BASE;
+
+		ret = ipq_sw_mdio_init(edma_cfg->phy_name);
+		if (ret)
+			goto init_failed;
+
+		for (phy_id = 0; phy_id < PHY_MAX; phy_id++) {
+			if (!phy_info[phy_id].present) {
+				printf("PPE%d: absent\n", phy_info[phy_id].port_id);
+				continue;
+			}
+
+			phy_addr = phy_info[phy_id].phy_address;
+			ret = ipq807x_wait_phy(&phy_info[phy_id], &phy_chip_id);
+			if (ret)
+				goto init_failed;
+			printf("PPE%d %s: PHY 0x%x ID 0x%08x (%s)\n",
+			       phy_info[phy_id].port_id, phy_info[phy_id].label,
+			       phy_addr, phy_chip_id,
+			       phy_info[phy_id].phy_type == AQ_PHY_TYPE ?
+			       "Clause 45" : "Clause 22");
+
+			if (phy_info[phy_id].phy_type == MALIBU_PHY_TYPE) {
+				if (!sw_init_done) {
+					ret = ipq_qca8075_phy_init_at(
+						&ipq807x_edma_dev[i]->ops[phy_id],
+						qca8075_package_base);
+					if (ret)
+						goto init_failed;
+					sw_init_done = 1;
+					qca8075_phy_interface_set_mode(
+						qca8075_package_base, 0x0);
+				} else {
+					ipq_qca8075_phy_map_ops(
+						&ipq807x_edma_dev[i]->ops[phy_id]);
+				}
+			} else if (phy_info[phy_id].phy_type == AQ_PHY_TYPE &&
+				   phy_chip_id == AQUANTIA_PHY_113C) {
+				ret = ipq_qca_aquantia_phy_init(
+					&ipq807x_edma_dev[i]->ops[phy_id], phy_addr);
+				if (ret)
+					goto init_failed;
+			} else {
+				printf("WXR %s PHY type or ID is unsupported\n",
+				       phy_info[phy_id].label);
+				ret = -EINVAL;
+				goto init_failed;
+			}
+		}
+
+		ret = ipq807x_edma_hw_init(hw[i]);
+
+		if (ret)
+			goto init_failed;
+
+		eth_register(dev[i]);
+	}
+
+	return 0;
+
+init_failed:
+	printf("WXR Ethernet initialization failed: %d\n", ret);
+
+	for (i = 0; i < IPQ807X_EDMA_DEV; i++) {
+		if (dev[i]) {
+			eth_unregister(dev[i]);
+			ipq807x_free_mem(dev[i]);
+		}
+		if (c_info[i]) {
+			ipq807x_edma_free_desc(c_info[i]);
+			ipq807x_edma_free_rings(c_info[i]);
+			ipq807x_free_mem(c_info[i]);
+		}
+		if (ipq807x_edma_dev[i]) {
+			ipq807x_free_mem(ipq807x_edma_dev[i]);
+		}
+	}
+
+	return ret ? ret : -EINVAL;
+}
+
+#else
 int ipq807x_edma_init(void *edma_board_cfg)
 {
 	struct eth_device *dev[IPQ807X_EDMA_DEV];
@@ -1928,3 +2504,4 @@ init_failed:
 
 	return -1;
 }
+#endif

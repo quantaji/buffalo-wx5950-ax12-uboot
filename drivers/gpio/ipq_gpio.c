@@ -59,7 +59,7 @@ void gpio_tlmm_config(struct qca_gpio_config *gpio_config)
 	return;
 }
 
-void gpio_set_value(unsigned int gpio, unsigned int out)
+int gpio_set_value(unsigned int gpio, int out)
 {
 	unsigned int *addr = (unsigned int *)GPIO_IN_OUT_ADDR(gpio);
 	unsigned int val = 0;
@@ -68,6 +68,8 @@ void gpio_set_value(unsigned int gpio, unsigned int out)
 	val &= ~(0x2);
 	val |= out << 1;
 	writel(val, addr);
+
+	return 0;
 }
 
 int gpio_get_value(unsigned int gpio)
@@ -78,15 +80,40 @@ int gpio_get_value(unsigned int gpio)
 	return (val & 1);
 }
 
-void gpio_direction_output(unsigned int gpio, unsigned int out)
+int gpio_request(unsigned int gpio, const char *label)
+{
+	return 0;
+}
+
+int gpio_free(unsigned int gpio)
+{
+	return 0;
+}
+
+int gpio_direction_input(unsigned int gpio)
 {
 	unsigned int *addr = (unsigned int *)GPIO_CONFIG_ADDR(gpio);
-	unsigned int val = 0;
+	unsigned int val = readl(addr);
+
+	val &= ~(0xf << 2);
+	val &= ~(1 << 9);
+	writel(val, addr);
+
+	return 0;
+}
+
+int gpio_direction_output(unsigned int gpio, int out)
+{
+	unsigned int *addr = (unsigned int *)GPIO_CONFIG_ADDR(gpio);
+	unsigned int val;
 
 	gpio_set_value(gpio, out);
 	val = readl(addr);
+	val &= ~(0xf << 2);
 	val |= 1 << 9;
 	writel(val, addr);
+
+	return 0;
 }
 
 int qca_gpio_init(int offset)

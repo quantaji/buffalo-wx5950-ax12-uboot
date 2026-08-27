@@ -71,8 +71,8 @@
 #define VR_MII_AN_INTR_STS			0x1f8002
 #define CL37_ANCMPLT_INTR			(1 << 0)
 
-void ppe_uniphy_mode_set(uint32_t uniphy_index, uint32_t mode);
+int ppe_uniphy_mode_set(uint32_t uniphy_index, uint32_t mode);
 void ppe_uniphy_usxgmii_port_reset(uint32_t uniphy_index);
 void ppe_uniphy_usxgmii_duplex_set(uint32_t uniphy_index, int duplex);
 void ppe_uniphy_usxgmii_speed_set(uint32_t uniphy_index, int speed);
-void ppe_uniphy_usxgmii_autoneg_completed(uint32_t uniphy_index);
+int ppe_uniphy_usxgmii_autoneg_completed(uint32_t uniphy_index);

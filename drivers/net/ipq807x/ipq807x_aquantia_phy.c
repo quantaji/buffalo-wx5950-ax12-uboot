@@ -12,14 +12,17 @@
  *
  */
 #include <common.h>
-#include <net.h>
+#include <command.h>
 #include <asm-generic/errno.h>
-#include <asm/io.h>
 #include <malloc.h>
-#include <phy.h>
 #include <miiphy.h>
 #include "ipq_phy.h"
 #include "ipq807x_aquantia_phy.h"
+
+#ifndef CONFIG_BUFFALO_WXR5950AX12
+#include <net.h>
+#include <asm/io.h>
+#include <phy.h>
 #include <crc.h>
 #include <mmc.h>
 #include <asm/errno.h>
@@ -28,7 +31,9 @@
 #include <spi.h>
 #include <asm/global_data.h>
 #include <fdtdec.h>
+#endif
 
+#ifndef CONFIG_BUFFALO_WXR5950AX12
 DECLARE_GLOBAL_DATA_PTR;
 typedef struct {
 	unsigned int image_type;
@@ -50,17 +55,20 @@ static int debug = 0;
 extern qca_mmc mmc_host;
 static qca_mmc *host = &mmc_host;
 #endif
+#endif
 
 extern int ipq_mdio_write(int mii_id,
 		int regnum, u16 value);
 extern int ipq_mdio_read(int mii_id,
 		int regnum, ushort *data);
 
+#ifndef CONFIG_BUFFALO_WXR5950AX12
 extern int ipq_sw_mdio_init(const char *);
 extern void eth_clock_enable(void);
 static int program_ethphy_fw(unsigned int phy_addr,
 			 uint32_t load_addr,uint32_t file_size );
 static qca_smem_flash_info_t *sfi = &qca_smem_flash_info;
+#endif
 
 u16 aq_phy_reg_write(u32 dev_id, u32 phy_id,
 		u32 reg_id, u16 reg_val)
@@ -78,11 +86,11 @@ u8 aq_phy_get_link_status(u32 dev_id, u32 phy_id)
 {
 	u16 phy_data;
 	uint32_t reg;
-	
-	reg = AQ_PHY_AUTO_STATUS_REG | AQUANTIA_MII_ADDR_C45; 
+
+	reg = AQ_PHY_AUTO_STATUS_REG | AQUANTIA_MII_ADDR_C45;
 	phy_data = aq_phy_reg_read(dev_id, phy_id, reg);
 	phy_data = aq_phy_reg_read(dev_id, phy_id, reg);
-	
+
 	if (((phy_data >> 2) & 0x1) & PORT_LINK_UP)
 		return 0;
 
@@ -94,7 +102,7 @@ u32 aq_phy_get_duplex(u32 dev_id, u32 phy_id, fal_port_duplex_t *duplex)
 	u16 phy_data;
 	uint32_t reg;
 
-	reg = AQ_PHY_LINK_STATUS_REG | AQUANTIA_MII_ADDR_C45; 
+	reg = AQ_PHY_LINK_STATUS_REG | AQUANTIA_MII_ADDR_C45;
 	phy_data = aq_phy_reg_read(dev_id, phy_id, reg);
 
 	/*
@@ -114,7 +122,7 @@ u32 aq_phy_get_speed(u32 dev_id, u32 phy_id, fal_port_speed_t *speed)
 	u16 phy_data;
 	uint32_t reg;
 
-	reg = AQ_PHY_LINK_STATUS_REG | AQUANTIA_MII_ADDR_C45; 
+	reg = AQ_PHY_LINK_STATUS_REG | AQUANTIA_MII_ADDR_C45;
 	phy_data = aq_phy_reg_read(dev_id, phy_id, reg);
 
 	switch ((phy_data >> 1) & 0x7) {
@@ -215,6 +223,7 @@ static int do_aq_phy_restart(cmd_tbl_t *cmdtp, int flag, int argc, char * const 
 	return 0;
 }
 
+#ifndef CONFIG_BUFFALO_WXR5950AX12
 int ipq_board_fw_download(unsigned int phy_addr)
 {
 	char runcmd[256];
@@ -589,6 +598,8 @@ U_BOOT_CMD(
 	"LOAD aq-fw-binary",
 	""
 );
+
+#endif
 
 U_BOOT_CMD(
 	aq_phy_restart,	5,	1,	do_aq_phy_restart,

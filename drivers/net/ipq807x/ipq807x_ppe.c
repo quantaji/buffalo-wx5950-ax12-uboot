@@ -306,11 +306,62 @@ void ppe_port_rxmac_status_set(uint32_t uniphy_index)
 
 }
 
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+void ipq807x_uxsgmii_port_disable(int port)
+{
+	uint32_t uniphy_index;
+	uint32_t xgmac_index;
+	uint32_t reg_value;
+
+	if (port == (PORT5 - PPE_UNIPHY_INSTANCE1))
+		uniphy_index = PPE_UNIPHY_INSTANCE1;
+	else if (port == (PORT6 - PPE_UNIPHY_INSTANCE1))
+		uniphy_index = PPE_UNIPHY_INSTANCE2;
+	else
+		return;
+
+	xgmac_index = uniphy_index - 1;
+	ppe_port_bridge_txmac_set(port + 1, 1);
+	mdelay(10);
+
+	ipq807x_ppe_reg_read(PPE_SWITCH_NSS_SWITCH_XGMAC0 +
+			MAC_RX_CONFIGURATION_ADDRESS +
+			(xgmac_index * NSS_SWITCH_XGMAC_MAC_RX_CONFIGURATION),
+			&reg_value);
+	reg_value &= ~RE;
+	reg_value |= LM;
+	ipq807x_ppe_reg_write(PPE_SWITCH_NSS_SWITCH_XGMAC0 +
+			MAC_RX_CONFIGURATION_ADDRESS +
+			(xgmac_index * NSS_SWITCH_XGMAC_MAC_RX_CONFIGURATION),
+			reg_value);
+	mdelay(1);
+	reg_value &= ~LM;
+	ipq807x_ppe_reg_write(PPE_SWITCH_NSS_SWITCH_XGMAC0 +
+			MAC_RX_CONFIGURATION_ADDRESS +
+			(xgmac_index * NSS_SWITCH_XGMAC_MAC_RX_CONFIGURATION),
+			reg_value);
+
+	ipq807x_ppe_reg_read(PPE_SWITCH_NSS_SWITCH_XGMAC0 +
+			(xgmac_index * NSS_SWITCH_XGMAC_MAC_TX_CONFIGURATION),
+			&reg_value);
+	reg_value &= ~TE;
+	ipq807x_ppe_reg_write(PPE_SWITCH_NSS_SWITCH_XGMAC0 +
+			(xgmac_index * NSS_SWITCH_XGMAC_MAC_TX_CONFIGURATION),
+			reg_value);
+}
+#endif
+
 void ppe_mac_packet_filter_set(uint32_t uniphy_index)
 {
+	uint32_t value = 0x81;
+
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	value |= MAC_PACKET_FILTER_RATE_ADAPTATION;
+#endif
 	ipq807x_ppe_reg_write(PPE_SWITCH_NSS_SWITCH_XGMAC0 +
 			MAC_PACKET_FILTER_ADDRESS +
-			(uniphy_index * MAC_PACKET_FILTER_INC), 0x81);
+			(uniphy_index * MAC_PACKET_FILTER_INC),
+			value);
 }
 
 void ipq807x_10g_r_speed_set(int port, int status)
@@ -332,10 +383,13 @@ void ipq807x_10g_r_speed_set(int port, int status)
 	ppe_mac_packet_filter_set(uniphy_index - 1);
 }
 
-void ipq807x_uxsgmii_speed_set(int port, int speed, int duplex,
+int ipq807x_uxsgmii_speed_set(int port, int speed, int duplex,
 				int status)
 {
 	uint32_t uniphy_index;
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	int ret;
+#endif
 
 	/* Setting the speed only for PORT5 and PORT6 */
 	if (port == (PORT5 - PPE_UNIPHY_INSTANCE1))
@@ -343,9 +397,15 @@ void ipq807x_uxsgmii_speed_set(int port, int speed, int duplex,
 	else if (port == (PORT6 - PPE_UNIPHY_INSTANCE1))
 		uniphy_index = PPE_UNIPHY_INSTANCE2;
 	else
-		return;
+		return -EINVAL;
 
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	ret = ppe_uniphy_usxgmii_autoneg_completed(uniphy_index);
+	if (ret)
+		return ret;
+#else
 	ppe_uniphy_usxgmii_autoneg_completed(uniphy_index);
+#endif
 	ppe_uniphy_usxgmii_speed_set(uniphy_index, speed);
 	ppe_xgmac_speed_set(uniphy_index - 1, speed);
 	ppe_uniphy_usxgmii_duplex_set(uniphy_index, duplex);
@@ -354,6 +414,8 @@ void ipq807x_uxsgmii_speed_set(int port, int speed, int duplex,
 	ppe_port_txmac_status_set(uniphy_index - 1);
 	ppe_port_rxmac_status_set(uniphy_index - 1);
 	ppe_mac_packet_filter_set(uniphy_index - 1);
+
+	return 0;
 }
 /*
  * ipq807x_ppe_flow_port_map_tbl_port_num_set()
@@ -1167,50 +1229,70 @@ static void ppe_port_mux_mac_type_set(int port_id, int mode)
 
 
 
-void ipq807x_ppe_interface_mode_init(void)
+int ipq807x_ppe_interface_mode_init(void)
 {
-	uint32_t mode0, mode1, mode2;
+	int mode0, mode1, mode2;
 	int node;
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	int ret;
+#endif
 
 	node = fdt_path_offset(gd->fdt_blob, "/ess-switch");
 	if (node < 0) {
 		printf("Error: ess-switch not specified in dts");
-		return;
+		return node;
 	}
 
 	mode0 = fdtdec_get_uint(gd->fdt_blob, node, "switch_mac_mode", -1);
 	if (mode0 < 0) {
 		printf("Error: switch_mac_mode not specified in dts");
-		return;
+		return mode0;
 	}
 
 	mode1 = fdtdec_get_uint(gd->fdt_blob, node, "switch_mac_mode1", -1);
 	if (mode1 < 0) {
 		printf("Error: switch_mac_mode1 not specified in dts");
-		return;
+		return mode1;
 	}
 	mode2 = fdtdec_get_uint(gd->fdt_blob, node, "switch_mac_mode2", -1);
 	if (mode2 < 0) {
 		printf("Error: switch_mac_mode2 not specified in dts");
-		return;
+		return mode2;
 	}
 
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	ret = ppe_uniphy_mode_set(PPE_UNIPHY_INSTANCE0, mode0);
+	if (ret)
+		return ret;
+	ret = ppe_uniphy_mode_set(PPE_UNIPHY_INSTANCE1, mode1);
+	if (ret)
+		return ret;
+	ret = ppe_uniphy_mode_set(PPE_UNIPHY_INSTANCE2, mode2);
+	if (ret)
+		return ret;
+#else
 	ppe_uniphy_mode_set(PPE_UNIPHY_INSTANCE0, mode0);
 	ppe_uniphy_mode_set(PPE_UNIPHY_INSTANCE1, mode1);
 	ppe_uniphy_mode_set(PPE_UNIPHY_INSTANCE2, mode2);
+#endif
 
 	/* Port 1-4 are used mac type as GMAC by default but Port5 and Port6
 	* can be used as GMAC or XGMAC */
 	ppe_port_mux_mac_type_set(PORT5, mode1);
 	ppe_port_mux_mac_type_set(PORT6, mode2);
+
+	return 0;
 }
 
 /*
  * ipq807x_ppe_provision_init()
  */
-void ipq807x_ppe_provision_init(void)
+int ipq807x_ppe_provision_init(void)
 {
 	int i;
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	int ret;
+#endif
 	uint32_t queue;
 
 	/* Port4 Port5, Port6 port mux configuration, all GMAC */
@@ -1232,7 +1314,7 @@ void ipq807x_ppe_provision_init(void)
 	/* Add CPU port 0 to VSI 2 */
 	ipq807x_ppe_vp_port_tbl_set(0, 2);
 
-	/* Add port 1 - 4 to VSI 2 */
+	/* Keep the complete logical port group; WXR disables the absent PPE1 MAC. */
 	ipq807x_ppe_vp_port_tbl_set(1, 2);
 	ipq807x_ppe_vp_port_tbl_set(2, 2);
 	ipq807x_ppe_vp_port_tbl_set(3, 2);
@@ -1308,9 +1390,20 @@ void ipq807x_ppe_provision_init(void)
 	for (i = 0; i < 8; i++)
 		ipq807x_ppe_reg_write(IPQ807X_PPE_STP_BASE + (0x4 * i), 0x3);
 
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	ret = ipq807x_ppe_interface_mode_init();
+	if (ret)
+		return ret;
+#else
 	ipq807x_ppe_interface_mode_init();
+#endif
 	/* Port 0-5 enable */
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	ppe_port_bridge_txmac_set(1, 1);
+	for (i = 1; i < 6; i++) {
+#else
 	for (i = 0; i < 6; i++) {
+#endif
 		ipq807x_gmac_port_enable(i);
 		ppe_port_bridge_txmac_set(i + 1, 1);
 	}
@@ -1320,4 +1413,6 @@ void ipq807x_ppe_provision_init(void)
 	ipq807x_ppe_acl_set(1, ADPT_ACL_HPPE_IPV4_DIP_RULE, UDP_PKT, 68, 0xffff, 0, 0);
 	/* Dropping all the UDP packets */
 	ipq807x_ppe_acl_set(2, ADPT_ACL_HPPE_IPV4_DIP_RULE, UDP_PKT, 0, 0, 0, 1);
+
+	return 0;
 }

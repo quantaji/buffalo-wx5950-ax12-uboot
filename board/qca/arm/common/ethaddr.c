@@ -39,6 +39,103 @@ extern  struct sdhci_host mmc_host;
 #endif
 #endif
 
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+#define WXR_ORGDATA_IDENTITY_SIZE	0x32
+#define WXR_ORGDATA_MAC_OFFSET		0x20
+
+static int wxr_read_orgdata(char *partition, uchar *identity)
+{
+	u32 start_blocks;
+	u32 size_blocks;
+	u32 flash_type;
+	u32 length = WXR_ORGDATA_IDENTITY_SIZE;
+	u64 partition_size;
+	loff_t offset;
+	int ret;
+
+	if (qca_smem_flash_info.flash_type != SMEM_BOOT_NAND_FLASH &&
+	    qca_smem_flash_info.flash_type != SMEM_BOOT_QSPI_NAND_FLASH)
+		return -ENODEV;
+
+	ret = smem_getpart(partition, &start_blocks, &size_blocks);
+	if (ret < 0)
+		return ret;
+
+	partition_size =
+		(u64)qca_smem_flash_info.flash_block_size * size_blocks;
+	if (partition_size < WXR_ORGDATA_IDENTITY_SIZE)
+		return -EINVAL;
+
+	flash_type = CONFIG_NAND_FLASH_INFO_IDX;
+	offset = (loff_t)qca_smem_flash_info.flash_block_size * start_blocks;
+	ret = nand_read(&nand_info[flash_type], offset, &length, identity);
+	if (ret)
+		return ret;
+	if (length != WXR_ORGDATA_IDENTITY_SIZE)
+		return -EIO;
+
+	return 0;
+}
+
+static void wxr_mac_add(const uchar *base, uint increment, uchar *result)
+{
+	int i;
+	uint value = increment;
+
+	memcpy(result, base, 6);
+	for (i = 5; i >= 0 && value; i--) {
+		value += result[i];
+		result[i] = value & 0xff;
+		value >>= 8;
+	}
+}
+
+static int wxr_get_orgdata_mac(uchar *mac)
+{
+	static const char model[] = "WXR-5950AX12";
+	uchar identity[WXR_ORGDATA_IDENTITY_SIZE];
+	uchar identity_copy[WXR_ORGDATA_IDENTITY_SIZE];
+	uchar expected[6];
+	int ret;
+
+	ret = wxr_read_orgdata("0:ORGDATA", identity);
+	if (ret)
+		return ret;
+	ret = wxr_read_orgdata("0:ORGDATA_1", identity_copy);
+	if (ret)
+		return ret;
+
+	if (memcmp(identity, identity_copy, sizeof(identity))) {
+		puts("WXR identity: ORGDATA copies differ\n");
+		return -EINVAL;
+	}
+	if (memcmp(identity, model, sizeof(model))) {
+		puts("WXR identity: model in ORGDATA is invalid\n");
+		return -EINVAL;
+	}
+	if (!is_valid_ethaddr(identity + WXR_ORGDATA_MAC_OFFSET) ||
+	    !is_valid_ethaddr(identity + WXR_ORGDATA_MAC_OFFSET + 6) ||
+	    !is_valid_ethaddr(identity + WXR_ORGDATA_MAC_OFFSET + 12)) {
+		puts("WXR identity: ORGDATA contains an invalid MAC address\n");
+		return -EINVAL;
+	}
+
+	wxr_mac_add(identity + WXR_ORGDATA_MAC_OFFSET, 8, expected);
+	if (memcmp(expected, identity + WXR_ORGDATA_MAC_OFFSET + 6, 6)) {
+		puts("WXR identity: WLAN0 MAC is not wired MAC + 8\n");
+		return -EINVAL;
+	}
+	wxr_mac_add(identity + WXR_ORGDATA_MAC_OFFSET, 16, expected);
+	if (memcmp(expected, identity + WXR_ORGDATA_MAC_OFFSET + 12, 6)) {
+		puts("WXR identity: WLAN1 MAC is not wired MAC + 16\n");
+		return -EINVAL;
+	}
+
+	memcpy(mac, identity + WXR_ORGDATA_MAC_OFFSET, 6);
+	return 0;
+}
+#endif
+
 /*
  * Gets the ethernet address from the ART partition table and return the value
  */
@@ -158,6 +255,29 @@ int get_eth_mac_address(uchar *enetaddr, uint no_of_macs)
 
 void set_ethmac_addr(void)
 {
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	uchar env_mac[6];
+	uchar org_mac[6];
+	int org_valid;
+
+	org_valid = wxr_get_orgdata_mac(org_mac) == 0;
+	if (eth_getenv_enetaddr("ethaddr", env_mac)) {
+		printf("WXR Ethernet MAC from APPSBLENV: %pM\n", env_mac);
+		if (org_valid && memcmp(env_mac, org_mac, 6))
+			printf("WXR identity warning: APPSBLENV %pM differs from ORGDATA %pM\n",
+			       env_mac, org_mac);
+		return;
+	}
+
+	if (org_valid) {
+		eth_setenv_enetaddr("ethaddr", org_mac);
+		printf("WXR Ethernet MAC recovered in memory from ORGDATA: %pM\n",
+		       org_mac);
+		return;
+	}
+
+	puts("WXR Ethernet disabled: no valid APPSBLENV or ORGDATA MAC\n");
+#else
 	int i, ret;
 	uchar enetaddr[CONFIG_IPQ_NO_MACS * 6];
 	uchar *mac_addr;
@@ -183,4 +303,5 @@ void set_ethmac_addr(void)
 		}
 		snprintf(ethaddr, sizeof(ethaddr), "eth%daddr", (i + 1));
 	}
+#endif
 }

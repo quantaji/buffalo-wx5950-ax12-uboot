@@ -14,44 +14,80 @@
  */
 
 #include <common.h>
+#include <bootm.h>
 #include <command.h>
 #include <elf.h>
 #include <net.h>
 #include <vxworks.h>
+#ifdef CONFIG_ARM
+#include <asm/armv7.h>
+#include <asm/u-boot-arm.h>
+#endif
 #ifdef CONFIG_X86
 #include <asm/e820.h>
 #include <linux/linkage.h>
 #endif
 
+DECLARE_GLOBAL_DATA_PTR;
+
+static int bootelf_range_end(ulong start, ulong size, ulong *end)
+{
+	*end = start + size;
+	if (*end < start)
+		return -1;
+
+	return 0;
+}
+
+static int bootelf_ranges_overlap(ulong first_start, ulong first_end,
+				  ulong second_start, ulong second_end)
+{
+	return first_start < second_end && second_start < first_end;
+}
+
 /*
  * A very simple elf loader, assumes the image is valid, returns the
  * entry point address.
  */
-static unsigned long load_elf_image_phdr(unsigned long addr)
+static int load_elf_image_phdr(ulong addr, ulong *entry)
 {
-	Elf32_Ehdr *ehdr; /* Elf header structure pointer */
-	Elf32_Phdr *phdr; /* Program header structure pointer */
+	Elf32_Ehdr *ehdr;
+	Elf32_Phdr *phdr;
 	int i;
 
 	ehdr = (Elf32_Ehdr *)addr;
 	phdr = (Elf32_Phdr *)(addr + ehdr->e_phoff);
 
-	/* Load each program header */
-	for (i = 0; i < ehdr->e_phnum; ++i) {
-		void *dst = (void *)(uintptr_t)phdr->p_paddr;
-		void *src = (void *)addr + phdr->p_offset;
-		debug("Loading phdr %i to 0x%p (%i bytes)\n",
-		      i, dst, phdr->p_filesz);
-		if (phdr->p_filesz)
-			memcpy(dst, src, phdr->p_filesz);
-		if (phdr->p_filesz != phdr->p_memsz)
-			memset(dst + phdr->p_filesz, 0x00,
-			       phdr->p_memsz - phdr->p_filesz);
-		flush_cache((unsigned long)dst, phdr->p_filesz);
-		++phdr;
+	for (i = 0; i < ehdr->e_phnum; i++) {
+		void *dst;
+		void *src;
+
+		if (phdr[i].p_type != PT_LOAD)
+			continue;
+
+		if (phdr[i].p_filesz > phdr[i].p_memsz) {
+			printf("## PT_LOAD %d has filesz larger than memsz\n", i);
+			return 1;
+		}
+
+		dst = (void *)(uintptr_t)phdr[i].p_paddr;
+		src = (void *)(addr + phdr[i].p_offset);
+		debug("Loading PT_LOAD %d to 0x%p (%u/%u bytes)\n",
+		      i, dst, phdr[i].p_filesz, phdr[i].p_memsz);
+
+		if (phdr[i].p_filesz)
+			memcpy(dst, src, phdr[i].p_filesz);
+
+		if (phdr[i].p_memsz > phdr[i].p_filesz)
+			memset(dst + phdr[i].p_filesz, 0,
+			       phdr[i].p_memsz - phdr[i].p_filesz);
+
+		if (phdr[i].p_memsz)
+			flush_cache((ulong)dst, phdr[i].p_memsz);
 	}
 
-	return ehdr->e_entry;
+	*entry = ehdr->e_entry;
+	return 0;
 }
 
 static unsigned long load_elf_image_shdr(unsigned long addr)
@@ -129,6 +165,202 @@ static unsigned long do_bootelf_exec(ulong (*entry)(int, char * const[]),
 	return ret;
 }
 
+static int validate_uboot_elf(ulong addr, ulong *entry)
+{
+	Elf32_Ehdr *ehdr = (Elf32_Ehdr *)addr;
+	Elf32_Phdr *phdr;
+	ulong phdr_addr;
+	ulong phdr_end;
+	ulong image_end;
+	ulong runtime_start;
+	ulong runtime_end;
+	ulong stack_marker;
+	int executable_entry = 0;
+	int load_segments = 0;
+	int i;
+
+	if (!IS_ELF(*ehdr)) {
+		printf("## No ELF image at address 0x%08lx\n", addr);
+		return 1;
+	}
+
+	if (ehdr->e_ident[EI_CLASS] != ELFCLASS32 ||
+	    ehdr->e_ident[EI_DATA] != ELFDATA2LSB ||
+	    ehdr->e_machine != EM_ARM) {
+		puts("## U-Boot handoff requires a 32-bit little-endian ARM ELF\n");
+		return 1;
+	}
+
+	if (ehdr->e_type != ET_EXEC && ehdr->e_type != ET_DYN) {
+		puts("## U-Boot handoff requires an ET_EXEC or ET_DYN ELF\n");
+		return 1;
+	}
+
+	if (ehdr->e_ehsize != sizeof(*ehdr) ||
+	    ehdr->e_phentsize != sizeof(Elf32_Phdr) ||
+	    ehdr->e_phnum == 0) {
+		puts("## Invalid ELF program-header description\n");
+		return 1;
+	}
+
+	if (bootelf_range_end(addr, sizeof(*ehdr), &image_end) ||
+	    bootelf_range_end(addr, ehdr->e_phoff, &phdr_addr) ||
+	    bootelf_range_end(phdr_addr,
+			      ehdr->e_phnum * sizeof(Elf32_Phdr),
+			      &phdr_end)) {
+		puts("## ELF program-header range overflows memory\n");
+		return 1;
+	}
+
+	if (phdr_end > image_end)
+		image_end = phdr_end;
+	phdr = (Elf32_Phdr *)phdr_addr;
+
+	/* Establish the complete source range before checking destinations. */
+	for (i = 0; i < ehdr->e_phnum; i++) {
+		ulong source_start;
+		ulong source_end;
+
+		if (bootelf_range_end(addr, phdr[i].p_offset,
+				      &source_start) ||
+		    bootelf_range_end(source_start, phdr[i].p_filesz,
+				      &source_end)) {
+			puts("## ELF source segment range overflows memory\n");
+			return 1;
+		}
+
+		if (source_end > image_end)
+			image_end = source_end;
+	}
+
+	runtime_start = min(gd->start_addr_sp, (ulong)&stack_marker);
+	if (bootelf_range_end(gd->relocaddr, gd->mon_len, &runtime_end)) {
+		puts("## Current U-Boot runtime range is invalid\n");
+		return 1;
+	}
+
+	for (i = 0; i < ehdr->e_phnum; i++) {
+		ulong destination_start;
+		ulong destination_end;
+#ifdef CONFIG_NR_DRAM_BANKS
+		int destination_in_dram = 0;
+		int bank;
+#endif
+
+		if (phdr[i].p_type != PT_LOAD)
+			continue;
+
+		load_segments++;
+		if (phdr[i].p_filesz > phdr[i].p_memsz) {
+			printf("## PT_LOAD %d has filesz larger than memsz\n", i);
+			return 1;
+		}
+
+		destination_start = phdr[i].p_paddr;
+		if (bootelf_range_end(destination_start, phdr[i].p_memsz,
+				      &destination_end)) {
+			printf("## PT_LOAD %d destination range overflows memory\n",
+			       i);
+			return 1;
+		}
+
+		if (phdr[i].p_memsz) {
+#ifndef CONFIG_NR_DRAM_BANKS
+			puts("## Board does not describe usable DRAM\n");
+			return 1;
+#else
+			if (!gd->bd) {
+				puts("## Board DRAM information is unavailable\n");
+				return 1;
+			}
+
+			for (bank = 0; bank < CONFIG_NR_DRAM_BANKS; bank++) {
+				ulong bank_start;
+				ulong bank_end;
+
+				if (!gd->bd->bi_dram[bank].size)
+					continue;
+
+				bank_start = gd->bd->bi_dram[bank].start;
+				if (bootelf_range_end(
+					    bank_start,
+					    gd->bd->bi_dram[bank].size,
+					    &bank_end)) {
+					puts("## Board DRAM range overflows memory\n");
+					return 1;
+				}
+
+				if (destination_start >= bank_start &&
+				    destination_end <= bank_end) {
+					destination_in_dram = 1;
+					break;
+				}
+			}
+
+			if (!destination_in_dram) {
+				printf("## PT_LOAD %d is outside usable DRAM\n", i);
+				return 1;
+			}
+#endif
+		}
+
+		if (bootelf_ranges_overlap(destination_start, destination_end,
+					   runtime_start, runtime_end)) {
+			printf("## PT_LOAD %d overlaps the running U-Boot\n", i);
+			return 1;
+		}
+
+		if (bootelf_ranges_overlap(destination_start, destination_end,
+					   addr, image_end)) {
+			printf("## PT_LOAD %d overlaps its source ELF image\n", i);
+			return 1;
+		}
+
+		if ((phdr[i].p_flags & PF_X) &&
+		    ehdr->e_entry >= destination_start &&
+		    ehdr->e_entry < destination_end)
+			executable_entry = 1;
+	}
+
+	if (!load_segments) {
+		puts("## ELF image contains no PT_LOAD segment\n");
+		return 1;
+	}
+
+	if (!executable_entry) {
+		puts("## ELF entry is outside executable PT_LOAD segments\n");
+		return 1;
+	}
+
+	*entry = ehdr->e_entry;
+	return 0;
+}
+
+int __weak board_uboot_handoff_prepare(void)
+{
+	return 0;
+}
+
+#ifdef CONFIG_ARM
+static void __noreturn bootelf_start_uboot(ulong entry)
+{
+	void (*uboot_entry)(void) = (void (*)(void))entry;
+
+#ifdef CONFIG_CMD_NET
+	eth_halt();
+#endif
+	bootm_disable_interrupts();
+	cleanup_before_linux();
+	DSB;
+	ISB;
+
+	uboot_entry();
+
+	reset_cpu(0);
+	hang();
+}
+#endif
+
 /*
  * Determine if a valid ELF image exists at the given memory location.
  * First look at the ELF header magic field, then make sure that it is
@@ -157,9 +389,11 @@ int valid_elf_image(unsigned long addr)
 int do_bootelf(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 {
 	unsigned long addr; /* Address of the ELF image */
+	unsigned long entry; /* ELF entry point */
 	unsigned long rc; /* Return value from user code */
 	char *sload, *saddr;
 	const char *ep = getenv("autostart");
+	int uboot_handoff;
 
 	int rcode = 0;
 
@@ -179,13 +413,41 @@ int do_bootelf(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 	else
 		addr = load_addr;
 
+	uboot_handoff = sload && !strcmp(sload, "-u");
+	if (uboot_handoff) {
+#ifndef CONFIG_ARM
+		puts("## U-Boot handoff is supported only on ARM\n");
+		return 1;
+#else
+		if (validate_uboot_elf(addr, &entry))
+			return 1;
+
+		if (ep && !strcmp(ep, "no"))
+			return load_elf_image_phdr(addr, &entry);
+
+		if (board_uboot_handoff_prepare()) {
+			puts("## Board rejected the U-Boot handoff state\n");
+			return 1;
+		}
+
+		if (load_elf_image_phdr(addr, &entry))
+			return 1;
+
+		printf("## Starting U-Boot at 0x%08lx ...\n", entry);
+		bootelf_start_uboot(entry);
+#endif
+	}
+
 	if (!valid_elf_image(addr))
 		return 1;
 
-	if (sload && sload[1] == 'p')
-		addr = load_elf_image_phdr(addr);
-	else
+	if (sload && sload[1] == 'p') {
+		if (load_elf_image_phdr(addr, &entry))
+			return 1;
+		addr = entry;
+	} else {
 		addr = load_elf_image_shdr(addr);
+	}
 
 	if (ep && !strcmp(ep, "no"))
 		return rcode;
@@ -395,9 +657,10 @@ int do_bootvx(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 U_BOOT_CMD(
 	bootelf, 3, 0, do_bootelf,
 	"Boot from an ELF image in memory",
-	"[-p|-s] [address]\n"
+	"[-p|-s|-u] [address]\n"
 	"\t- load ELF image at [address] via program headers (-p)\n"
-	"\t  or via section headers (-s)"
+	"\t- load ELF image at [address] via section headers (-s)\n"
+	"\t- validate and transfer to another ARM U-Boot (-u)"
 );
 
 U_BOOT_CMD(

@@ -1,0 +1,105 @@
+/*
+ * Buffalo WXR-5950AX12 board description.
+ *
+ * Hardware assignments are taken from the OpenWrt WXR-5950AX12 DTS and
+ * verified against the board's current U-Boot GPIO and MDIO observations.
+ */
+
+/dts-v1/;
+#include "ipq807x-soc.dtsi"
+#include <dt-bindings/qcom/gpio-ipq807x.h>
+
+/ {
+	model = "Buffalo WXR-5950AX12";
+	compatible = "buffalo,wxr-5950ax12", "qcom,ipq8074";
+	machid = <0x08010000>;
+	config_name = "config@hk01";
+
+	aliases {
+		console = "/serial@78B3000";
+		uart2 = "/serial@78B0000";
+		i2c0 = "/i2c@78b6000";
+	};
+
+	board-gpio {
+		mode_ap = <29>;
+		mode_wb = <30>;
+		op_manual = <52>;
+		wps = <51>;
+		reset = <54>;
+
+		led_router_white = <21>;
+		led_router_red = <22>;
+		led_power_red = <31>;
+		led_power_white = <34>;
+		led_internet_white = <43>;
+		led_internet_red = <44>;
+		led_wlan_red = <55>;
+		led_wlan_white = <56>;
+
+		usb_vbus = <64>;
+		qca8075_reset = <37>;
+		aqr113c_reset = <63>;
+	};
+
+	ess-switch {
+		switch_mac_mode = <0>;
+		switch_mac_mode1 = <2>;
+		switch_mac_mode2 = <2>;
+		qca8075_package_base = <0x18>;
+
+		port_phyinfo {
+			port1 {
+				port_id = <1>;
+				present = <0>;
+				label = "absent";
+				phy_address = <0xffffffff>;
+				phy_type = <0>;
+			};
+
+			port2 {
+				port_id = <2>;
+				present = <1>;
+				label = "lan4";
+				phy_address = <0x19>;
+				phy_type = <1>;
+			};
+
+			port3 {
+				port_id = <3>;
+				present = <1>;
+				label = "lan3";
+				phy_address = <0x1a>;
+				phy_type = <1>;
+			};
+
+			port4 {
+				port_id = <4>;
+				present = <1>;
+				label = "lan2";
+				phy_address = <0x1b>;
+				phy_type = <1>;
+			};
+
+			port5 {
+				port_id = <5>;
+				present = <1>;
+				label = "wan";
+				phy_address = <0>;
+				phy_type = <3>;
+			};
+
+			port6 {
+				port_id = <6>;
+				present = <1>;
+				label = "lan1";
+				phy_address = <8>;
+				phy_type = <3>;
+			};
+		};
+	};
+
+	xhci@8c00000 {
+		status = "disabled";
+	};
+};

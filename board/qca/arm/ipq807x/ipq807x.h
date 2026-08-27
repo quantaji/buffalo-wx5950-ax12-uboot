@@ -307,6 +307,7 @@ extern const char *del_node[];
 extern const add_node_t add_fdt_node[];
 
 void reset_crashdump(void);
+void ipq807x_pcie_v2_clock_init(int id);
 #ifdef CONFIG_PCI_IPQ
 void board_pci_init(int id);
 __weak void board_pcie_clock_init(int id) {}
@@ -315,6 +316,11 @@ void qgic_init(void);
 void handle_noc_err(void);
 void ipq_fdt_fixup_socinfo(void *blob);
 int ipq_board_usb_init(void);
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+int wxr5950ax12_prepare_phy_init(void);
+int wxr5950ax12_usb_vbus_enable(void);
+int board_uboot_handoff_prepare(void);
+#endif
 unsigned smem_read_alloc_entry(smem_mem_type_t type, void *buf, int len);
 __weak int ipq_get_tz_version(char *version_name, int buf_size)
 {

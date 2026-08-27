@@ -28,7 +28,9 @@ extern int ipq_mdio_write(int mii_id,
 		int regnum, u16 value);
 extern int ipq_mdio_read(int mii_id,
 		int regnum, ushort *data);
+#ifndef CONFIG_BUFFALO_WXR5950AX12
 extern void qca8075_phy_serdes_reset(u32 phy_id);
+#endif
 
 void csr1_write(int phy_id, int addr, int  value)
 {
@@ -105,22 +107,28 @@ static void ppe_gcc_uniphy_soft_reset(uint32_t uniphy_index)
 	writel(reg_value, GCC_UNIPHY0_MISC + (uniphy_index * GCC_UNIPHY_REG_INC));
 }
 
-static void ppe_uniphy_psgmii_mode_set(uint32_t uniphy_index)
+static int ppe_uniphy_psgmii_mode_set(uint32_t uniphy_index)
 {
 	ppe_gcc_uniphy_xpcs_reset(uniphy_index, true);
 	writel(0x220, PPE_UNIPHY_BASE + (uniphy_index * PPE_UNIPHY_REG_INC)
 			+ PPE_UNIPHY_MODE_CONTROL);
 	ppe_gcc_uniphy_soft_reset(uniphy_index);
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	return ppe_uniphy_calibration(uniphy_index);
+#else
 	ppe_uniphy_calibration(uniphy_index);
 	qca8075_phy_serdes_reset(0);
+	return 0;
+#endif
 }
 
-static void ppe_uniphy_qsgmii_mode_set(uint32_t uniphy_index)
+static int ppe_uniphy_qsgmii_mode_set(uint32_t uniphy_index)
 {
 	ppe_gcc_uniphy_xpcs_reset(uniphy_index, true);
 	writel(0x120, PPE_UNIPHY_BASE + (uniphy_index * PPE_UNIPHY_REG_INC)
 			+ PPE_UNIPHY_MODE_CONTROL);
 	ppe_gcc_uniphy_soft_reset(uniphy_index);
+	return 0;
 }
 
 static void ppe_uniphy_sgmii_mode_set(uint32_t uniphy_index, uint32_t channel)
@@ -206,9 +214,12 @@ static void ppe_uniphy_10g_r_mode_set(uint32_t uniphy_index)
 }
 
 
-static void ppe_uniphy_usxgmii_mode_set(uint32_t uniphy_index)
+static int ppe_uniphy_usxgmii_mode_set(uint32_t uniphy_index)
 {
 	uint32_t reg_value = 0;
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	int ret;
+#endif
 
 	writel(UNIPHY_MISC2_REG_VALUE, PPE_UNIPHY_BASE +
 		(uniphy_index * PPE_UNIPHY_REG_INC) + UNIPHY_MISC2_REG_OFFSET);
@@ -222,9 +233,21 @@ static void ppe_uniphy_usxgmii_mode_set(uint32_t uniphy_index)
 	writel(0x1021, PPE_UNIPHY_BASE + (uniphy_index * PPE_UNIPHY_REG_INC)
 			 + PPE_UNIPHY_MODE_CONTROL);
 	ppe_gcc_uniphy_soft_reset(uniphy_index);
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	ret = ppe_uniphy_calibration(uniphy_index);
+	if (ret)
+		return ret;
+#else
 	ppe_uniphy_calibration(uniphy_index);
+#endif
 	ppe_gcc_uniphy_xpcs_reset(uniphy_index, false);
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	ret = ppe_uniphy_10g_r_linkup(uniphy_index);
+	if (ret)
+		printf("uniphy%u 10G-R PCS link is not ready\n", uniphy_index);
+#else
 	ppe_uniphy_10g_r_linkup(uniphy_index);
+#endif
 	reg_value = csr1_read(uniphy_index, VR_XS_PCS_DIG_CTRL1_ADDRESS);
 	reg_value |= USXG_EN;
 	csr1_write(uniphy_index, VR_XS_PCS_DIG_CTRL1_ADDRESS, reg_value);
@@ -237,41 +260,42 @@ static void ppe_uniphy_usxgmii_mode_set(uint32_t uniphy_index)
 	reg_value &= ~SS5;
 	reg_value |= SS6 | SS13 | DUPLEX_MODE;
 	csr1_write(uniphy_index, SR_MII_CTRL_ADDRESS, reg_value);
+
+	return 0;
 }
 
-void ppe_uniphy_mode_set(uint32_t uniphy_index, uint32_t mode)
+int ppe_uniphy_mode_set(uint32_t uniphy_index, uint32_t mode)
 {
 	switch(mode) {
 		case PORT_WRAPPER_PSGMII:
-			ppe_uniphy_psgmii_mode_set(uniphy_index);
-			break;
+			return ppe_uniphy_psgmii_mode_set(uniphy_index);
 		case PORT_WRAPPER_QSGMII:
-			ppe_uniphy_qsgmii_mode_set(uniphy_index);
-			break;
+			return ppe_uniphy_qsgmii_mode_set(uniphy_index);
 		case PORT_WRAPPER_SGMII0_RGMII4:
 			ppe_uniphy_sgmii_mode_set(uniphy_index, 0);
-			break;
+			return 0;
 		case PORT_WRAPPER_SGMII1_RGMII4:
 			ppe_uniphy_sgmii_mode_set(uniphy_index, 1);
-			break;
+			return 0;
 		case PORT_WRAPPER_SGMII4_RGMII4:
 			ppe_uniphy_sgmii_mode_set(uniphy_index, 4);
-			break;
+			return 0;
 		case PORT_WRAPPER_SGMII_PLUS:
 			ppe_uniphy_sgmii_plus_mode_set(uniphy_index);
-			break;
+			return 0;
 		case PORT_WRAPPER_USXGMII:
-			ppe_uniphy_usxgmii_mode_set(uniphy_index);
-			break;
+			return ppe_uniphy_usxgmii_mode_set(uniphy_index);
 		case PORT_WRAPPER_10GBASE_R:
 			ppe_uniphy_10g_r_mode_set(uniphy_index);
-			break;
+			return 0;
+		case PORT_WRAPPER_UNUSED:
+			return 0;
 		default:
-			break;
+			return -EINVAL;
 	}
 }
 
-void ppe_uniphy_usxgmii_autoneg_completed(uint32_t uniphy_index)
+int ppe_uniphy_usxgmii_autoneg_completed(uint32_t uniphy_index)
 {
 	uint32_t autoneg_complete = 0, retries = 100;
 	uint32_t reg_value = 0;
@@ -280,13 +304,15 @@ void ppe_uniphy_usxgmii_autoneg_completed(uint32_t uniphy_index)
 		mdelay(1);
 		if (retries-- == 0)
 		{
-			return;
+			return -ETIMEDOUT;
 		}
 		reg_value = csr1_read(uniphy_index, VR_MII_AN_INTR_STS);
 		autoneg_complete = reg_value & 0x1;
 	}
 	reg_value &= ~CL37_ANCMPLT_INTR;
 	csr1_write(uniphy_index, VR_MII_AN_INTR_STS, reg_value);
+
+	return 0;
 }
 
 void ppe_uniphy_usxgmii_speed_set(uint32_t uniphy_index, int speed)

@@ -25,8 +25,8 @@
 		};
 
 		fdt@hk01 {
-			description = "IPQ807x HK01 control DTB";
-			data = /incbin/("ipq807x-hk01.dtb");
+			description = "Buffalo WXR-5950AX12 control DTB";
+			data = /incbin/("ipq807x-wxr5950ax12.dtb");
 			type = "flat_dt";
 			arch = "arm";
 			compression = "none";

@@ -96,7 +96,11 @@
 #else
 #define CONFIG_SYS_TEXT_BASE            0x4A900000
 #endif
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+#define CONFIG_SYS_SDRAM_SIZE           0x40000000
+#else
 #define CONFIG_SYS_SDRAM_SIZE           0x10000000
+#endif
 #define CONFIG_MAX_RAM_BANK_SIZE        CONFIG_SYS_SDRAM_SIZE
 #define CONFIG_SYS_LOAD_ADDR            (CONFIG_SYS_SDRAM_BASE + (64 << 20))
 #define CONFIG_ROOTFS_LOAD_ADDR         (CONFIG_SYS_SDRAM_BASE + (32 << 20))
@@ -286,7 +290,11 @@ extern loff_t board_env_size;
 #define CONFIG_DOS_PARTITION
 #define CONFIG_USB_STORAGE
 #define CONFIG_SYS_USB_XHCI_MAX_ROOT_PORTS      2
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+#define CONFIG_USB_MAX_CONTROLLER_COUNT         1
+#else
 #define CONFIG_USB_MAX_CONTROLLER_COUNT         2
+#endif
 #endif
 
 #define PCI_MAX_DEVICES	2

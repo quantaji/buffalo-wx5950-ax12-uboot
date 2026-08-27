@@ -223,11 +223,17 @@ union ipo_action_u {
 #define TE					(1 << 0)
 #define NSS_SWITCH_XGMAC_MAC_RX_CONFIGURATION	0x4000
 #define MAC_RX_CONFIGURATION_ADDRESS		0x4
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+#define LM					(1 << 10)
+#endif
 #define RE					(1 << 0)
 #define ACS					(1 << 1)
 #define CST					(1 << 2)
 #define MAC_PACKET_FILTER_INC			0x4000
 #define MAC_PACKET_FILTER_ADDRESS 		0x8
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+#define MAC_PACKET_FILTER_RATE_ADAPTATION	(1U << 31)
+#endif
 
 #define XGMAC_SPEED_SELECT_10000M 		0
 #define XGMAC_SPEED_SELECT_5000M 		1

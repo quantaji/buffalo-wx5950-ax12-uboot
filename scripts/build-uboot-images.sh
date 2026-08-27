@@ -101,7 +101,7 @@ else
   unset TARGETCC
   unset HOSTCC
   MAKE_MODE_ARGS=(HOSTCC=gcc)
-  MAKE_BUILD_ARGS=(--eval=".SECONDARY: arch/arm/dts/ipq807x-hk01.dtb")
+  MAKE_BUILD_ARGS=(--eval=".SECONDARY: arch/arm/dts/ipq807x-wxr5950ax12.dtb")
 fi
 
 TEMP_DIR="$(mktemp -d "/tmp/wxr5950ax12-${MODE}.XXXXXX")"
@@ -153,6 +153,7 @@ make-all -C "$TEMP_SOURCE" \
 make-all -C "$TEMP_SOURCE" \
   O="$BUILD_DIR" \
   "${MAKE_MODE_ARGS[@]}" \
+  -j "$JOBS" \
   "${MAKE_BUILD_ARGS[@]}"
 
 if [ ! -s "$BUILD_DIR/u-boot" ]; then
@@ -165,7 +166,7 @@ if [ "$MODE" = "flash" ]; then
   python3 -B "$PACKER" -f "$STRIPPED_ELF" -o "$PACKAGED_IMAGE" -v 3
 else
   RAM_RAW="$BUILD_DIR/u-boot.bin"
-  RAM_DTB="$BUILD_DIR/arch/arm/dts/ipq807x-hk01.dtb"
+  RAM_DTB="$BUILD_DIR/arch/arm/dts/ipq807x-wxr5950ax12.dtb"
   MKIMAGE="$BUILD_DIR/tools/mkimage"
   DUMPIMAGE="$BUILD_DIR/tools/dumpimage"
   FIT_INPUT="$TEMP_DIR/fit-input"
@@ -187,7 +188,7 @@ else
 
   mkdir -p "$FIT_INPUT"
   gzip -9 -n -c "$RAM_RAW" > "$FIT_INPUT/u-boot.bin.gz"
-  install -m 0644 "$RAM_DTB" "$FIT_INPUT/ipq807x-hk01.dtb"
+  install -m 0644 "$RAM_DTB" "$FIT_INPUT/ipq807x-wxr5950ax12.dtb"
   install -m 0644 "$RAM_ITS" "$FIT_INPUT/wxr5950ax12-ram.its"
 
   (
