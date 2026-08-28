@@ -162,7 +162,7 @@ bad:
 	return err;
 }
 
-static int ubi_create_vol(char *volume, int64_t size, int dynamic)
+int ubi_volume_create(char *volume, int64_t size, int dynamic)
 {
 	struct ubi_mkvol_req req;
 	int err;
@@ -189,7 +189,8 @@ static int ubi_create_vol(char *volume, int64_t size, int dynamic)
 	printf("Creating %s volume %s of size %lld\n",
 		dynamic ? "dynamic" : "static", volume, size);
 	/* Call real ubi create volume */
-	return ubi_create_volume(ubi, &req);
+	err = ubi_create_volume(ubi, &req);
+	return err < 0 ? -err : err;
 }
 
 static struct ubi_volume *ubi_find_volume(char *volume)
@@ -207,7 +208,7 @@ static struct ubi_volume *ubi_find_volume(char *volume)
 	return NULL;
 }
 
-static int ubi_remove_vol(char *volume)
+int ubi_volume_remove(char *volume)
 {
 	int err, reserved_pebs, i;
 	struct ubi_volume *vol;
@@ -261,7 +262,7 @@ out_err:
 	return err;
 }
 
-static int ubi_volume_continue_write(char *volume, void *buf, size_t size)
+int ubi_volume_continue_write(char *volume, void *buf, size_t size)
 {
 	int err = 1;
 	struct ubi_volume *vol;
@@ -308,7 +309,7 @@ int ubi_volume_begin_write(char *volume, void *buf, size_t size,
 		return ENODEV;
 
 	rsvd_bytes = vol->reserved_pebs * (ubi->leb_size - vol->data_pad);
-	if (size < 0 || size > rsvd_bytes) {
+	if (!full_size || size > full_size || full_size > rsvd_bytes) {
 		printf("size > volume size! Aborting!\n");
 		return EINVAL;
 	}
@@ -338,13 +339,41 @@ long long ubi_get_volume_size(char *volume)
 	return vol->used_bytes;
 }
 
-int ubi_volume_read(char *volume, char *buf, size_t size)
+int ubi_volume_get_info(char *volume, long long *used_bytes,
+			long long *capacity)
+{
+	struct ubi_volume *vol;
+
+	vol = ubi_find_volume(volume);
+	if (vol == NULL)
+		return ENODEV;
+
+	if (used_bytes)
+		*used_bytes = vol->used_bytes;
+	if (capacity)
+		*capacity = (long long)vol->reserved_pebs *
+			(ubi->leb_size - vol->data_pad);
+
+	return 0;
+}
+
+long long ubi_get_available_bytes(void)
+{
+	if (!ubi || !ubi_dev.selected)
+		return -ENODEV;
+	if (ubi->ro_mode)
+		return -EROFS;
+
+	return (long long)ubi->avail_pebs * ubi->leb_size;
+}
+
+int ubi_volume_read_at(char *volume, loff_t offset, void *buf, size_t size)
 {
 	int err, lnum, off, len, tbuf_size;
 	void *tbuf;
 	unsigned long long tmp;
 	struct ubi_volume *vol;
-	loff_t offp = 0;
+	loff_t offp = offset;
 
 	vol = ubi_find_volume(volume);
 	if (vol == NULL)
@@ -358,6 +387,8 @@ int ubi_volume_read(char *volume, char *buf, size_t size)
 		printf("damaged volume, update marker is set");
 		return EBADF;
 	}
+	if (offp < 0 || offp > vol->used_bytes)
+		return EINVAL;
 	if (offp == vol->used_bytes)
 		return 0;
 
@@ -411,6 +442,11 @@ int ubi_volume_read(char *volume, char *buf, size_t size)
 
 	free(tbuf);
 	return err;
+}
+
+int ubi_volume_read(char *volume, char *buf, size_t size)
+{
+	return ubi_volume_read_at(volume, 0, buf, size);
 }
 
 static int ubi_dev_scan(struct mtd_info *info, char *ubidev,
@@ -601,13 +637,13 @@ static int do_ubi(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
 		}
 		/* E.g., create volume */
 		if (argc == 3)
-			return ubi_create_vol(argv[2], size, dynamic);
+			return ubi_volume_create(argv[2], size, dynamic);
 	}
 
 	if (strncmp(argv[1], "remove", 6) == 0) {
 		/* E.g., remove volume */
 		if (argc == 3)
-			return ubi_remove_vol(argv[2]);
+			return ubi_volume_remove(argv[2]);
 	}
 
 	if (strncmp(argv[1], "write", 5) == 0) {

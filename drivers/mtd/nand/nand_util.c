@@ -100,6 +100,9 @@ int nand_erase_opts(nand_info_t *meminfo, const nand_erase_options_t *opts)
 	     erase.addr += meminfo->erasesize) {
 
 		WATCHDOG_RESET();
+#ifdef CONFIG_SHOW_ACTIVITY
+		show_activity(0);
+#endif
 
 		if (opts->lim && (erase.addr >= (opts->offset + opts->lim))) {
 			puts("Size of erase exceeds limit\n");
@@ -529,6 +532,9 @@ int nand_verify(nand_info_t *nand, loff_t ofs, size_t len, u_char *buf)
 	/* Read the NAND back in page-size groups to limit malloc size */
 	for (verofs = ofs; verofs < ofs + len;
 	     verofs += verlen, buf += verlen) {
+#ifdef CONFIG_SHOW_ACTIVITY
+		show_activity(0);
+#endif
 		verlen = min(nand->writesize, (uint32_t)(ofs + len - verofs));
 		rval = nand_read(nand, verofs, &verlen, verbuf);
 		if (!rval || (rval == -EUCLEAN))
@@ -637,6 +643,9 @@ int nand_write_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
 		size_t write_size, truncated_write_size;
 
 		WATCHDOG_RESET();
+#ifdef CONFIG_SHOW_ACTIVITY
+		show_activity(0);
+#endif
 
 		if (nand_block_isbad(nand, offset & ~(nand->erasesize - 1))) {
 			printf("Skip bad block 0x%08llx\n",
@@ -753,6 +762,9 @@ int nand_read_skip_bad(nand_info_t *nand, loff_t offset, size_t *length,
 		size_t read_length;
 
 		WATCHDOG_RESET();
+#ifdef CONFIG_SHOW_ACTIVITY
+		show_activity(0);
+#endif
 
 		if (nand_block_isbad(nand, offset & ~(nand->erasesize - 1))) {
 			printf("Skipping bad block 0x%08llx\n",

@@ -56,6 +56,22 @@ static char *bootmenu_getoption(unsigned short int n)
 	return getenv(name);
 }
 
+static int bootmenu_get_default(int count)
+{
+	const char *value = getenv("bootmenu_default");
+	char *end;
+	ulong selected;
+
+	if (!value || !*value)
+		return 0;
+
+	selected = simple_strtoul(value, &end, 10);
+	if (*end || selected >= count)
+		return 0;
+
+	return selected;
+}
+
 static void bootmenu_print_entry(void *data)
 {
 	struct bootmenu_entry *entry = data;
@@ -92,6 +108,9 @@ static void bootmenu_autoboot_loop(struct bootmenu_data *menu,
 		for (i = 0; i < 100; ++i) {
 			if (!tstc()) {
 				WATCHDOG_RESET();
+#ifdef CONFIG_SHOW_ACTIVITY
+				show_activity(0);
+#endif
 				mdelay(10);
 				continue;
 			}
@@ -101,8 +120,17 @@ static void bootmenu_autoboot_loop(struct bootmenu_data *menu,
 
 			switch (c) {
 			case '\e':
-				*esc = 1;
-				*key = KEY_NONE;
+				for (i = 0; i < 5 && !tstc(); ++i)
+					mdelay(10);
+
+				if (tstc()) {
+					*esc = 1;
+					*key = KEY_NONE;
+				} else {
+					menu->active = menu->count - 1;
+					*esc = 0;
+					*key = KEY_SELECT;
+				}
 				break;
 			case '\r':
 				*key = KEY_SELECT;
@@ -136,6 +164,9 @@ static void bootmenu_loop(struct bootmenu_data *menu,
 
 	while (!tstc()) {
 		WATCHDOG_RESET();
+#ifdef CONFIG_SHOW_ACTIVITY
+		show_activity(0);
+#endif
 		mdelay(10);
 	}
 
@@ -314,11 +345,13 @@ static struct bootmenu_data *bootmenu_create(int delay)
 
 	/* Add U-Boot console entry at the end */
 	if (i <= MAX_COUNT - 1) {
+		const char *exit_title = getenv("bootmenu_exit");
+
 		entry = malloc(sizeof(struct bootmenu_entry));
 		if (!entry)
 			goto cleanup;
 
-		entry->title = strdup("U-Boot console");
+		entry->title = strdup(exit_title ? exit_title : "U-Boot console");
 		if (!entry->title) {
 			free(entry);
 			goto cleanup;
@@ -347,6 +380,7 @@ static struct bootmenu_data *bootmenu_create(int delay)
 	}
 
 	menu->count = i;
+	menu->active = bootmenu_get_default(menu->count);
 	return menu;
 
 cleanup:
@@ -397,8 +431,12 @@ static void bootmenu_show(int delay)
 			goto cleanup;
 	}
 
-	/* Default menu entry is always first */
-	menu_default_set(menu, "0");
+	menu_default_set(menu, bootmenu->first->key);
+	for (iter = bootmenu->first; iter; iter = iter->next)
+		if (iter->num == bootmenu->active) {
+			menu_default_set(menu, iter->key);
+			break;
+		}
 
 	puts(ANSI_CURSOR_HIDE);
 	puts(ANSI_CLEAR_CONSOLE);
@@ -438,6 +476,7 @@ void menu_display_statusline(struct menu *m)
 {
 	struct bootmenu_entry *entry;
 	struct bootmenu_data *menu;
+	const char *title;
 
 	if (menu_default_choice(m, (void *)&entry) < 0)
 		return;
@@ -447,7 +486,8 @@ void menu_display_statusline(struct menu *m)
 	printf(ANSI_CURSOR_POSITION, 1, 1);
 	puts(ANSI_CLEAR_LINE);
 	printf(ANSI_CURSOR_POSITION, 2, 1);
-	puts("  *** U-Boot Boot Menu ***");
+	title = getenv("bootmenu_title");
+	puts(title ? title : "  *** U-Boot Boot Menu ***");
 	puts(ANSI_CLEAR_LINE_TO_END);
 	printf(ANSI_CURSOR_POSITION, 3, 1);
 	puts(ANSI_CLEAR_LINE);
@@ -456,7 +496,9 @@ void menu_display_statusline(struct menu *m)
 	printf(ANSI_CURSOR_POSITION, menu->count + 5, 1);
 	puts(ANSI_CLEAR_LINE);
 	printf(ANSI_CURSOR_POSITION, menu->count + 6, 1);
-	puts("  Press UP/DOWN to move, ENTER to select");
+	title = getenv("bootmenu_exit");
+	printf("  Press UP/DOWN to move, ENTER to select; %s",
+	       title ? title : "select U-Boot console to exit.");
 	puts(ANSI_CLEAR_LINE_TO_END);
 	printf(ANSI_CURSOR_POSITION, menu->count + 7, 1);
 	puts(ANSI_CLEAR_LINE);

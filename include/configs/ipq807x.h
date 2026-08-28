@@ -98,6 +98,10 @@
 #endif
 #ifdef CONFIG_BUFFALO_WXR5950AX12
 #define CONFIG_SYS_SDRAM_SIZE           0x40000000
+#define CONFIG_CMD_BOOTMENU
+#define CONFIG_MENU
+#define CONFIG_PREBOOT                  ""
+#define CONFIG_SHOW_ACTIVITY
 #else
 #define CONFIG_SYS_SDRAM_SIZE           0x10000000
 #endif

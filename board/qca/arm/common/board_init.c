@@ -23,6 +23,10 @@
 #include <mmc.h>
 #include <sdhci.h>
 
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+#include "../ipq807x/wxr5950ax12_boot.h"
+#endif
+
 DECLARE_GLOBAL_DATA_PTR;
 #ifdef CONFIG_ENV_IS_IN_NAND
 extern int nand_env_device;
@@ -402,6 +406,10 @@ int board_late_init(void)
 		printf("Dload magic cookie will not be set for warm reset\n");
 		sdi_disable();
 	}
+
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	wxr_install_boot_flow();
+#endif
 
 	return 0;
 }
