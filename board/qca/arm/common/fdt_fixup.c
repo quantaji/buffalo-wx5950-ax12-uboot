@@ -323,6 +323,9 @@ void ipq_fdt_fixup_mtdparts(void *blob, struct flash_node_info *ni)
 	struct mtd_device *dev;
 	char *parts;
 	int noff;
+	int partoff;
+	int depth;
+	int uses_smem_partitions;
 
 	parts = getenv("mtdparts");
 	if (!parts)
@@ -334,10 +337,26 @@ void ipq_fdt_fixup_mtdparts(void *blob, struct flash_node_info *ni)
 	for (; ni->compat; ni++) {
 		noff = fdt_node_offset_by_compatible(blob, -1, ni->compat);
 		while (noff != -FDT_ERR_NOTFOUND) {
-			dev = device_find(ni->type, ni->idx);
-			if (dev) {
-				if (fdt_node_set_part_info(blob, noff, dev))
-					return; /* return on error */
+			depth = 0;
+			uses_smem_partitions = 0;
+			partoff = fdt_next_node(blob, noff, &depth);
+
+			while (partoff >= 0 && depth > 0) {
+				if (!fdt_node_check_compatible(blob, partoff,
+							       "qcom,smem-part")) {
+					uses_smem_partitions = 1;
+					break;
+				}
+
+				partoff = fdt_next_node(blob, partoff, &depth);
+			}
+
+			if (!uses_smem_partitions) {
+				dev = device_find(ni->type, ni->idx);
+				if (dev) {
+					if (fdt_node_set_part_info(blob, noff, dev))
+						return; /* return on error */
+				}
 			}
 
 			/* Jump to next flash node */
