@@ -11,6 +11,7 @@
 
 #include <common.h>
 #include <config.h>
+#include <errno.h>
 #include <exports.h>
 #include <fat.h>
 #include <asm/byteorder.h>
@@ -35,6 +36,43 @@ static void downcase(char *str)
 		*str = tolower(*str);
 		str++;
 	}
+}
+
+#define LS_ROOT_FIND	3
+
+struct fat_root_search {
+	const char *suffix;
+	char *filename;
+	size_t filename_size;
+	loff_t file_size;
+	int found;
+};
+
+static int fat_consider_root_file(struct fat_root_search *search,
+				  const char *name, u32 file_size)
+{
+	size_t name_length;
+	size_t suffix_length;
+
+	if (!name[0])
+		return 0;
+
+	name_length = strlen(name);
+	suffix_length = strlen(search->suffix);
+	if (name_length < suffix_length ||
+	    strcmp(name + name_length - suffix_length, search->suffix))
+		return 0;
+
+	if (search->found && strcmp(name, search->filename) >= 0)
+		return 0;
+
+	if (name_length + 1 > search->filename_size)
+		return -ENAMETOOLONG;
+
+	strcpy(search->filename, name);
+	search->file_size = file_size;
+	search->found = 1;
+	return 0;
 }
 
 static block_dev_desc_t *cur_dev;
@@ -815,7 +853,8 @@ __u8 do_fat_read_at_block[MAX_CLUSTSIZE]
 	__aligned(ARCH_DMA_MINALIGN);
 
 int do_fat_read_at(const char *filename, loff_t pos, void *buffer,
-		   loff_t maxsize, int dols, int dogetsize, loff_t *size)
+		   loff_t maxsize, int dols, int dogetsize, loff_t *size,
+		   struct fat_root_search *search)
 {
 	char fnamecopy[2048];
 	boot_sector bs;
@@ -908,7 +947,8 @@ root_reparse:
 		if (!dols)
 			goto exit;
 
-		dols = LS_ROOT;
+		if (dols != LS_ROOT_FIND)
+			dols = LS_ROOT;
 	} else if ((idx = dirdelim(fnamecopy)) >= 0) {
 		isdir = 1;
 		fnamecopy[idx] = '\0';
@@ -991,10 +1031,24 @@ root_reparse:
 					prevcksum =
 						((dir_slot *)dentptr)->alias_checksum;
 
-					get_vfatname(mydata,
-						     root_cluster,
-						     dir_ptr,
-						     dentptr, l_name);
+					if (get_vfatname(mydata, root_cluster,
+							 dir_ptr, dentptr, l_name) &&
+					    dols == LS_ROOT_FIND) {
+						ret = -EIO;
+						goto exit;
+					}
+
+					if (dols == LS_ROOT_FIND) {
+						if (!(dentptr->attr & ATTR_DIR)) {
+							ret = fat_consider_root_file(
+								search, l_name,
+								FAT2CPU32(dentptr->size));
+							if (ret)
+								goto exit;
+						}
+						dentptr++;
+						continue;
+					}
 
 					if (dols == LS_ROOT) {
 						char dirc;
@@ -1041,17 +1095,31 @@ root_reparse:
 					printf("\n%d file(s), %d dir(s)\n\n",
 						files, dirs);
 					ret = 0;
-				}
+				} else if (dols == LS_ROOT_FIND)
+					ret = search->found ? 0 : -ENOENT;
 				goto exit;
 			}
 			else if (vfat_enabled &&
-				 dols == LS_ROOT && csum == prevcksum) {
+				 (dols == LS_ROOT || dols == LS_ROOT_FIND) &&
+				 csum == prevcksum) {
 				prevcksum = 0xffff;
 				dentptr++;
 				continue;
 			}
 
 			get_name(dentptr, s_name);
+
+			if (dols == LS_ROOT_FIND) {
+				if (!(dentptr->attr & ATTR_DIR)) {
+					ret = fat_consider_root_file(
+						search, s_name,
+						FAT2CPU32(dentptr->size));
+					if (ret)
+						goto exit;
+				}
+				dentptr++;
+				continue;
+			}
 
 			if (dols == LS_ROOT) {
 				int isdir = (dentptr->attr & ATTR_DIR);
@@ -1144,7 +1212,8 @@ root_reparse:
 				printf("\n%d file(s), %d dir(s)\n\n",
 				       files, dirs);
 				*size = 0;
-			}
+			} else if (dols == LS_ROOT_FIND)
+				ret = search->found ? 0 : -ENOENT;
 			goto exit;
 		}
 	}
@@ -1237,7 +1306,8 @@ exit:
 int do_fat_read(const char *filename, void *buffer, loff_t maxsize, int dols,
 		loff_t *actread)
 {
-	return do_fat_read_at(filename, 0, buffer, maxsize, dols, 0, actread);
+	return do_fat_read_at(filename, 0, buffer, maxsize, dols, 0, actread,
+			      NULL);
 }
 
 int file_fat_detectfs(void)
@@ -1309,18 +1379,44 @@ int file_fat_ls(const char *dir)
 	return do_fat_read(dir, NULL, 0, LS_YES, &size);
 }
 
+int fat_find_first_root_file(const char *suffix, char *filename,
+			     size_t filename_size, loff_t *file_size)
+{
+	struct fat_root_search search;
+	loff_t ignored_size = 0;
+	int ret;
+
+	if (!suffix || !suffix[0] || !filename || !filename_size || !file_size)
+		return -EINVAL;
+
+	memset(&search, 0, sizeof(search));
+	search.suffix = suffix;
+	search.filename = filename;
+	search.filename_size = filename_size;
+
+	ret = do_fat_read_at("", 0, NULL, 0, LS_ROOT_FIND, 0,
+			     &ignored_size, &search);
+	if (ret)
+		return ret;
+	if (!search.found)
+		return -ENOENT;
+
+	*file_size = search.file_size;
+	return 0;
+}
+
 int fat_exists(const char *filename)
 {
 	int ret;
 	loff_t size;
 
-	ret = do_fat_read_at(filename, 0, NULL, 0, LS_NO, 1, &size);
+	ret = do_fat_read_at(filename, 0, NULL, 0, LS_NO, 1, &size, NULL);
 	return ret == 0;
 }
 
 int fat_size(const char *filename, loff_t *size)
 {
-	return do_fat_read_at(filename, 0, NULL, 0, LS_NO, 1, size);
+	return do_fat_read_at(filename, 0, NULL, 0, LS_NO, 1, size, NULL);
 }
 
 int file_fat_read_at(const char *filename, loff_t pos, void *buffer,
@@ -1328,7 +1424,7 @@ int file_fat_read_at(const char *filename, loff_t pos, void *buffer,
 {
 	printf("reading %s\n", filename);
 	return do_fat_read_at(filename, pos, buffer, maxsize, LS_NO, 0,
-			      actread);
+			      actread, NULL);
 }
 
 int file_fat_read(const char *filename, void *buffer, int maxsize)

@@ -7,6 +7,7 @@
 #include <common.h>
 #include <command.h>
 #include <errno.h>
+#include <net.h>
 #include <asm/gpio.h>
 
 #include "wxr5950ax12_boot.h"
@@ -152,7 +153,9 @@ void show_activity(int arg)
 	ulong interval;
 	ulong now;
 
-	(void)arg;
+	if (arg && wxr_status == WXR_STATUS_WAITING && net_boot_file_size)
+		wxr_set_status(WXR_STATUS_RECEIVING);
+
 	if (!wxr_led_initialized)
 		return;
 
@@ -334,16 +337,10 @@ static int wxr_dispatch_action(cmd_tbl_t *cmdtp, enum wxr_action action)
 		ret = wxr_usb_boot_recovery(cmdtp);
 		break;
 	case WXR_ACTION_FAT_RECOVERY:
-		puts("WXR boot menu: FAT recovery is unavailable\n");
-		ret = -ENOSYS;
-		wxr_error_set(WXR_ERROR_INTERNAL, "FAT recovery",
-			      "action availability", ret, 0);
+		ret = wxr_usb_boot_fat_recovery(cmdtp);
 		break;
 	case WXR_ACTION_TFTP_RECOVERY:
-		puts("WXR boot menu: TFTP recovery is unavailable\n");
-		ret = -ENOSYS;
-		wxr_error_set(WXR_ERROR_INTERNAL, "TFTP recovery",
-			      "action availability", ret, 0);
+		ret = wxr_tftp_boot_recovery(cmdtp);
 		break;
 	case WXR_ACTION_WEB_FIXED:
 		ret = wxr_web_fixed(cmdtp);

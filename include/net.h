@@ -522,6 +522,10 @@ extern char	net_boot_file_name[1024];/* Boot File name */
 extern u32	net_boot_file_size;
 /* Boot file size in blocks as reported by the DHCP server */
 extern u32	net_boot_file_expected_size_in_blocks;
+/* Zero preserves the ordinary TFTP receive behavior. */
+extern u32	tftp_receive_size_limit;
+extern ulong	tftp_timeout_ms;
+extern int	tftp_timeout_count_max;
 
 #if defined(CONFIG_CMD_DNS)
 extern char *net_dns_resolve;		/* The host to resolve  */

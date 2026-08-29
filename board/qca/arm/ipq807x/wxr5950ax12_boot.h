@@ -72,6 +72,8 @@ int wxr_nand_boot_production(void);
 int wxr_nand_boot_recovery(cmd_tbl_t *cmdtp);
 int wxr_usb_boot_production(cmd_tbl_t *cmdtp);
 int wxr_usb_boot_recovery(cmd_tbl_t *cmdtp);
+int wxr_usb_boot_fat_recovery(cmd_tbl_t *cmdtp);
+int wxr_tftp_boot_recovery(cmd_tbl_t *cmdtp);
 
 int wxr_nand_write_recovery(const struct wxr_image *image);
 int wxr_nand_write_production(const struct wxr_image *image);

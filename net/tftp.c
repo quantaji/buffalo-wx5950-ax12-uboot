@@ -55,6 +55,7 @@ static ulong time_start;   /* Record time we started tftp */
  */
 ulong tftp_timeout_ms = TIMEOUT;
 int tftp_timeout_count_max = TIMEOUT_COUNT;
+u32 tftp_receive_size_limit;
 
 enum {
 	TFTP_ERR_UNDEFINED           = 0,
@@ -164,10 +165,20 @@ static void mcast_cleanup(void)
 
 #endif	/* CONFIG_MCAST_TFTP */
 
-static inline void store_block(int block, uchar *src, unsigned len)
+static inline int store_block(int block, uchar *src, unsigned len)
 {
 	ulong offset = block * tftp_block_size + tftp_block_wrap_offset;
-	ulong newsize = offset + len;
+	ulong newsize;
+
+	if (tftp_receive_size_limit &&
+	    (offset > tftp_receive_size_limit ||
+	     len > tftp_receive_size_limit - offset)) {
+		puts("\nTFTP error: file exceeds receive size limit\n");
+		net_set_state(NETLOOP_FAIL);
+		return -1;
+	}
+
+	newsize = offset + len;
 #ifdef CONFIG_SYS_DIRECT_FLASH_TFTP
 	int i, rc = 0;
 
@@ -186,7 +197,7 @@ static inline void store_block(int block, uchar *src, unsigned len)
 		if (rc) {
 			flash_perror(rc);
 			net_set_state(NETLOOP_FAIL);
-			return;
+			return -1;
 		}
 	} else
 #endif /* CONFIG_SYS_DIRECT_FLASH_TFTP */
@@ -204,7 +215,7 @@ static inline void store_block(int block, uchar *src, unsigned len)
 #endif /* CONFIG_IPQ806X */
 			puts("\nError file size too large\n");
 			net_set_state(NETLOOP_FAIL);
-			return;
+			return -1;
 		}
 		void *ptr = map_sysmem(load_addr + offset, len);
 
@@ -218,6 +229,8 @@ static inline void store_block(int block, uchar *src, unsigned len)
 
 	if (net_boot_file_size < newsize)
 		net_boot_file_size = newsize;
+
+	return 0;
 }
 
 /* Clear our state ready for a new transfer */
@@ -632,7 +645,8 @@ static void tftp_handler(uchar *pkt, unsigned dest, struct in_addr sip,
 		timeout_count_max = tftp_timeout_count_max;
 		net_set_timeout_handler(timeout_ms, tftp_timeout_handler);
 
-		store_block(tftp_cur_block - 1, pkt + 2, len);
+		if (store_block(tftp_cur_block - 1, pkt + 2, len))
+			break;
 
 		/*
 		 *	Acknowledge the block just received, which will prompt
@@ -724,6 +738,8 @@ static void tftp_timeout_handler(void)
 
 void tftp_start(enum proto_t protocol)
 {
+	timeout_ms = tftp_timeout_ms;
+
 #if CONFIG_NET_TFTP_VARS
 	char *ep;             /* Environment pointer */
 

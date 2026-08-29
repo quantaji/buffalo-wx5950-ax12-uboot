@@ -181,9 +181,9 @@ int ipq807x_edma_alloc_rx_buffer(struct ipq807x_edma_hw *ehw,
 		if (counter == cons)
 			break;
 
-		if (counter >= CONFIG_SYS_RX_ETH_BUFFER) {
-			pr_info("%s: counter >= CONFIG_SYS_RX_ETH_BUFFER counter = %d\n",
-				__func__, counter);
+		if (counter >= rxfill_ring->count) {
+			pr_info("%s: counter >= ring count counter = %u count = %u\n",
+				__func__, counter, rxfill_ring->count);
 			break;
 		}
 		/*
@@ -303,7 +303,7 @@ uint32_t ipq807x_edma_clean_rx(struct ipq807x_edma_common_info *c_info,
 	uint16_t prod_idx, cons_idx;
 	int src_port_num;
 	int pkt_length;
-	int rx = CONFIG_SYS_RX_ETH_BUFFER;
+	int rx = rxdesc_ring->count;
 	u16 cleaned_count = 0;
 	struct ipq807x_edma_hw *ehw = &c_info->hw;
 

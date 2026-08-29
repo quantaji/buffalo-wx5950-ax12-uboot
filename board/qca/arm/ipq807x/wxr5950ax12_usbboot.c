@@ -7,6 +7,7 @@
 #include <common.h>
 #include <command.h>
 #include <errno.h>
+#include <fat.h>
 #include <image.h>
 #include <malloc.h>
 #include <part.h>
@@ -38,6 +39,8 @@
 #define WXR_USB_IO_BUFFER_SIZE		(64UL << 10)
 #define WXR_USB_OVERLAY_CLEAR_SIZE	(1UL << 20)
 #define WXR_BOARD_COMPATIBLE		"buffalo,wxr-5950ax12"
+#define WXR_FAT_RECOVERY_SUFFIX		"-initramfs-uimage.itb"
+#define WXR_FAT_PARTITION_LIMIT		16
 
 enum wxr_usb_role {
 	WXR_USB_RECOVERY,
@@ -118,6 +121,34 @@ static int wxr_find_partition(block_dev_desc_t *device, const char *name,
 				      allow_larger);
 }
 
+static int wxr_usb_rescan(const char *target)
+{
+	extern char usb_started;
+	int ret;
+
+	if (usb_started && usb_stop()) {
+		puts("WXR USB: failed to stop the previous USB scan\n");
+		wxr_error_set(WXR_ERROR_IO, target, "USB rescan", -EIO, 0);
+		return -EIO;
+	}
+
+	wxr_set_status(WXR_STATUS_WAITING);
+	ret = usb_init();
+	if (ret == -ENODEV) {
+		wxr_error_set(WXR_ERROR_TARGET, target, "device discovery",
+			      ret, 0);
+		return ret;
+	}
+	if (ret) {
+		puts("WXR USB: controller initialization failed\n");
+		wxr_error_set(WXR_ERROR_IO, target,
+			      "controller initialization", ret, 0);
+		return ret;
+	}
+
+	return 0;
+}
+
 static int wxr_usb_open(enum wxr_usb_role role,
 			struct wxr_usb_layout *layout)
 {
@@ -128,7 +159,6 @@ static int wxr_usb_open(enum wxr_usb_role role,
 	int match_count = 0;
 	int devnum;
 	int ret;
-	extern char usb_started;
 
 	switch (role) {
 	case WXR_USB_RECOVERY:
@@ -144,24 +174,9 @@ static int wxr_usb_open(enum wxr_usb_role role,
 		return -EINVAL;
 	}
 
-	if (usb_started && usb_stop()) {
-		puts("WXR USB: failed to stop the previous USB scan\n");
-		wxr_error_set(WXR_ERROR_IO, target, "USB rescan", -EIO, 0);
-		return -EIO;
-	}
-
-	wxr_set_status(WXR_STATUS_WAITING);
-	ret = usb_init();
-	if (ret == -ENODEV) {
-		wxr_error_set(WXR_ERROR_TARGET, target, "device discovery", ret, 0);
+	ret = wxr_usb_rescan(target);
+	if (ret)
 		return ret;
-	}
-	if (ret) {
-		puts("WXR USB: controller initialization failed\n");
-		wxr_error_set(WXR_ERROR_IO, target, "controller initialization",
-			      ret, 0);
-		return ret;
-	}
 
 	for (devnum = 0; devnum < USB_MAX_STOR_DEV; devnum++) {
 		device = usb_stor_get_dev(devnum);
@@ -684,6 +699,135 @@ int wxr_usb_boot_recovery(cmd_tbl_t *cmdtp)
 	if (ret)
 		return ret;
 	ret = wxr_set_input(fit_length, &image);
+	if (ret)
+		return ret;
+
+	wxr_set_status(WXR_STATUS_VALIDATING);
+	return wxr_boot_recovery(cmdtp, &image);
+}
+
+int wxr_usb_boot_fat_recovery(cmd_tbl_t *cmdtp)
+{
+	char filename[VFAT_MAXLEN_BYTES];
+	disk_partition_t partition;
+	block_dev_desc_t *device;
+	struct wxr_image image;
+	loff_t file_size = 0;
+	loff_t actual = 0;
+	int storage_count = 0;
+	int fat_root_count = 0;
+	int fat_read_error = 0;
+	int selected_dev = -1;
+	int selected_part = -1;
+	int first_part;
+	int last_part;
+	int devnum;
+	int partnum;
+	int ret;
+
+	ret = wxr_usb_rescan("FAT recovery");
+	if (ret)
+		return ret;
+
+	for (devnum = 0; devnum < USB_MAX_STOR_DEV; devnum++) {
+		device = usb_stor_get_dev(devnum);
+		if (!device || device->type == DEV_TYPE_UNKNOWN)
+			continue;
+
+		storage_count++;
+		if (device->part_type == PART_TYPE_UNKNOWN) {
+			first_part = 0;
+			last_part = 0;
+		} else {
+			first_part = 1;
+			last_part = WXR_FAT_PARTITION_LIMIT;
+		}
+
+		for (partnum = first_part; partnum <= last_part; partnum++) {
+			memset(&partition, 0, sizeof(partition));
+			if (!partnum) {
+				partition.start = 0;
+				partition.size = device->lba;
+				partition.blksz = device->blksz;
+			} else if (get_partition_info(device, partnum,
+						      &partition)) {
+				continue;
+			}
+
+			if (fat_set_blk_dev(device, &partition))
+				continue;
+
+			fat_root_count++;
+			ret = fat_find_first_root_file(WXR_FAT_RECOVERY_SUFFIX,
+						       filename,
+						       sizeof(filename),
+						       &file_size);
+			if (!ret) {
+				selected_dev = devnum;
+				selected_part = partnum;
+				goto selected;
+			}
+			if (ret != -ENOENT)
+				fat_read_error = ret;
+			fat_close();
+		}
+	}
+
+	if (!storage_count) {
+		puts("WXR FAT recovery: no USB storage device found\n");
+		wxr_error_set(WXR_ERROR_TARGET, "FAT recovery",
+			      "mass-storage discovery", -ENODEV, 0);
+		return -ENODEV;
+	}
+	if (!fat_root_count) {
+		puts("WXR FAT recovery: no readable FAT filesystem found\n");
+		wxr_error_set(WXR_ERROR_TARGET, "FAT recovery",
+			      "FAT filesystem discovery", -ENOENT, 0);
+		return -ENOENT;
+	}
+	if (fat_read_error) {
+		puts("WXR FAT recovery: FAT root directory read failed\n");
+		wxr_error_set(WXR_ERROR_IO, "FAT recovery",
+			      "FAT root directory read", fat_read_error, 0);
+		return fat_read_error;
+	}
+
+	puts("WXR FAT recovery: no matching initramfs image found\n");
+	wxr_error_set(WXR_ERROR_IMAGE, "FAT recovery",
+		      "root filename selection", -ENOENT, 0);
+	return -ENOENT;
+
+selected:
+	printf("WXR FAT recovery: USB %d partition %d, file '%s'\n",
+	       selected_dev, selected_part, filename);
+	if (file_size <= 0) {
+		puts("WXR FAT recovery: selected image is empty\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "FAT recovery",
+			      "image length", -EINVAL, 0);
+		return -EINVAL;
+	}
+	if (file_size > WXR_INPUT_MAX_SIZE) {
+		printf("WXR FAT recovery: image is %lld bytes; limit is %lu\n",
+		       file_size, WXR_INPUT_MAX_SIZE);
+		wxr_error_set(WXR_ERROR_CAPACITY, "FAT recovery",
+			      "image length", -E2BIG, 0);
+		return -E2BIG;
+	}
+
+	wxr_set_status(WXR_STATUS_RECEIVING);
+	ret = file_fat_read_at(filename, 0, (void *)WXR_INPUT_ADDRESS,
+			       file_size, &actual);
+	if (ret || actual != file_size) {
+		printf("WXR FAT recovery: read %lld of %lld bytes\n",
+		       actual, file_size);
+		ret = ret ? ret : -EIO;
+		wxr_error_set(WXR_ERROR_IO, "FAT recovery",
+			      "FAT image read", ret, 0);
+		return ret;
+	}
+
+	flush_cache(WXR_INPUT_ADDRESS, (ulong)file_size);
+	ret = wxr_set_input((size_t)file_size, &image);
 	if (ret)
 		return ret;
 

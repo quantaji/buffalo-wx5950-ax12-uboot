@@ -119,7 +119,10 @@ verify_artifact() {
   local artifact="$1"
 
   if [ "$MODE" = "flash" ]; then
-    python3 -B "$FLASH_VALIDATOR" "$artifact" "$STRIPPED_ELF"
+    python3 -B "$FLASH_VALIDATOR" \
+      "$artifact" \
+      "$STRIPPED_ELF" \
+      "$BUILD_DIR/u-boot.map"
   else
     python3 -B "$RAM_VALIDATOR" "$artifact" "$BUILD_DIR"
   fi
@@ -162,6 +165,11 @@ if [ ! -s "$BUILD_DIR/u-boot" ]; then
 fi
 
 if [ "$MODE" = "flash" ]; then
+  if [ ! -s "$BUILD_DIR/u-boot.map" ]; then
+    echo "Flash build output missing or empty: $BUILD_DIR/u-boot.map" >&2
+    exit 1
+  fi
+
   arm-openwrt-linux-strip "$BUILD_DIR/u-boot" -o "$STRIPPED_ELF"
   python3 -B "$PACKER" -f "$STRIPPED_ELF" -o "$PACKAGED_IMAGE" -v 3
 else

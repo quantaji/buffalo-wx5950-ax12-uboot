@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import os
+import re
 import stat
 import struct
 
@@ -56,6 +57,44 @@ HASH_FILE_SIZE = 0xA8
 HASH_MEMORY_SIZE = 0x1000
 TLB_ADDRESS = 0x4A9A0000
 PARTITION_SIZE = 0x100000
+ARM_PAGE_TABLE_SIZE = 0x4000
+SBL_RESERVED_START = 0x4AA00000
+
+REQUIRED_MAP_SYMBOLS = (
+    "_start",
+    "__bss_start",
+    "__bss_end",
+)
+
+
+def read_map_symbols(path):
+    symbol_pattern = re.compile(
+        r"^\s*(0x[0-9a-fA-F]+)\s+"
+        r"(_start|__bss_start|__bss_end)(?:\s|$)"
+    )
+    symbols = {}
+
+    with open(path, "r", encoding="utf-8", errors="replace") as source:
+        for line in source:
+            match = symbol_pattern.match(line)
+            if not match:
+                continue
+
+            address = int(match.group(1), 16)
+            name = match.group(2)
+            if name in symbols and symbols[name] != address:
+                raise ValueError(
+                    "{} has conflicting addresses for {}".format(path, name)
+                )
+            symbols[name] = address
+
+    missing = [name for name in REQUIRED_MAP_SYMBOLS if name not in symbols]
+    if missing:
+        raise ValueError(
+            "{} is missing map symbols: {}".format(path, ", ".join(missing))
+        )
+
+    return symbols
 
 
 def read_elf32(path):
@@ -267,17 +306,42 @@ def verify_hashes(context):
         raise ValueError("APPSBL hash count does not match its program-header count")
 
 
+def verify_runtime_layout(map_path):
+    symbols = read_map_symbols(map_path)
+
+    if symbols["_start"] != ENTRY_ADDRESS:
+        raise ValueError("U-Boot map _start is not 0x4a900000")
+    if symbols["__bss_start"] > symbols["__bss_end"]:
+        raise ValueError("U-Boot BSS symbol order is invalid")
+
+    tlb_start = (symbols["__bss_end"] + 0xFFFF) & ~0xFFFF
+    tlb_end = tlb_start + ARM_PAGE_TABLE_SIZE
+    if tlb_end > SBL_RESERVED_START:
+        raise ValueError(
+            "U-Boot runtime page table overlaps SBL memory at 0x4aa00000"
+        )
+
+    return {
+        "bss_start": symbols["__bss_start"],
+        "bss_end": symbols["__bss_end"],
+        "tlb_start": tlb_start,
+        "tlb_end": tlb_end,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Verify a WXR-5950AX12 Qualcomm MBN v3 APPSBL"
     )
     parser.add_argument("appsbl", help="packaged APPSBL path")
     parser.add_argument("stripped_elf", help="corresponding stripped U-Boot ELF")
+    parser.add_argument("map", help="corresponding U-Boot linker map")
     args = parser.parse_args()
 
     try:
         context = verify_layout(args.appsbl, args.stripped_elf)
         verify_hashes(context)
+        runtime = verify_runtime_layout(args.map)
     except (OSError, ValueError, struct.error) as error:
         parser.exit(1, "verify-appsbl.py: error: {}\n".format(error))
 
@@ -289,6 +353,18 @@ def main():
     print("entry: 0x{:08x}".format(context["appsbl_header"]["e_entry"]))
     print("load: 0x{:08x}-0x{:08x}".format(ENTRY_ADDRESS, context["load_end"]))
     print("hash: 0x{:08x}-0x{:08x}".format(HASH_ADDRESS, HASH_ADDRESS + HASH_MEMORY_SIZE))
+    print(
+        "bss: 0x{:08x}-0x{:08x}".format(
+            runtime["bss_start"],
+            runtime["bss_end"],
+        )
+    )
+    print(
+        "tlb: 0x{:08x}-0x{:08x}".format(
+            runtime["tlb_start"],
+            runtime["tlb_end"],
+        )
+    )
     return 0
 
 

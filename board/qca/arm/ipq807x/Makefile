@@ -5,6 +5,7 @@ obj-$(CONFIG_BUFFALO_WXR5950AX12) += wxr5950ax12_boot.o
 obj-$(CONFIG_BUFFALO_WXR5950AX12) += wxr5950ax12_nandboot.o
 obj-$(CONFIG_BUFFALO_WXR5950AX12) += wxr5950ax12_usbboot.o
 obj-$(CONFIG_BUFFALO_WXR5950AX12) += wxr5950ax12_ui.o
+obj-$(CONFIG_BUFFALO_WXR5950AX12) += wxr5950ax12_tftp.o
 
 ifeq ($(CONFIG_WXR5950AX12_WEB),y)
 obj-y += wxr5950ax12_web.o
