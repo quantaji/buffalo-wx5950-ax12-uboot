@@ -262,6 +262,21 @@ out_err:
 	return err;
 }
 
+int ubi_volume_clear(char *volume)
+{
+	struct ubi_volume *vol;
+	int err;
+
+	vol = ubi_find_volume(volume);
+	if (vol == NULL)
+		return ENODEV;
+	if (ubi->ro_mode)
+		return EROFS;
+
+	err = ubi_start_update(ubi, vol, 0);
+	return err < 0 ? -err : err;
+}
+
 int ubi_volume_continue_write(char *volume, void *buf, size_t size)
 {
 	int err = 1;
@@ -365,6 +380,16 @@ long long ubi_get_available_bytes(void)
 		return -EROFS;
 
 	return (long long)ubi->avail_pebs * ubi->leb_size;
+}
+
+long long ubi_get_usable_leb_size(void)
+{
+	if (!ubi || !ubi_dev.selected)
+		return -ENODEV;
+	if (ubi->ro_mode)
+		return -EROFS;
+
+	return ubi->leb_size;
 }
 
 int ubi_volume_read_at(char *volume, loff_t offset, void *buf, size_t size)
@@ -522,6 +547,8 @@ int ubi_part(char *part_name, const char *vid_header_offset)
 	if (ubi_initialized) {
 		ubi_exit();
 		del_mtd_partitions(ubi_dev.mtd_info);
+		put_mtd_device(ubi_dev.mtd_info);
+		ubi_initialized = 0;
 	}
 
 	/*

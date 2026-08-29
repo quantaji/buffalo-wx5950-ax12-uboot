@@ -45,6 +45,9 @@ DECLARE_GLOBAL_DATA_PTR;
 static struct ipq807x_eth_dev *ipq807x_edma_dev[IPQ807X_EDMA_DEV];
 
 #ifdef CONFIG_BUFFALO_WXR5950AX12
+#define WXR_GCC_NSS_PPE_RESET		0x01868014
+#define WXR_GCC_EDMA_HW_RESET		0x00300000
+
 struct ipq807x_aqr_port_state {
 	bool configured;
 	fal_port_speed_t speed;
@@ -62,6 +65,14 @@ struct ipq807x_port_phy_info {
 };
 
 static struct ipq807x_port_phy_info phy_info[PHY_MAX];
+
+static void wxr5950ax12_edma_hw_reset(void)
+{
+	writel(WXR_GCC_EDMA_HW_RESET, WXR_GCC_NSS_PPE_RESET);
+	udelay(100);
+	writel(0, WXR_GCC_NSS_PPE_RESET);
+	udelay(100);
+}
 #else
 uchar ipq807x_def_enetaddr[6] = {0x00, 0x03, 0x7F, 0xBA, 0xDB, 0xAD};
 phy_info_t *phy_info[PHY_MAX] = {0};
@@ -1848,6 +1859,10 @@ int ipq807x_edma_hw_init(struct ipq807x_edma_hw *ehw)
 				IPQ807X_EDMA_TX_INT_MASK_UGT_INT;
 	ehw->misc_intr_mask = 0;
 	ehw->rx_payload_offset = IPQ807X_EDMA_RX_PREHDR_SIZE;
+
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	wxr5950ax12_edma_hw_reset();
+#endif
 
 	ipq807x_edma_disable_intr(ehw);
 	ipq807x_edma_disable_rings(ehw);

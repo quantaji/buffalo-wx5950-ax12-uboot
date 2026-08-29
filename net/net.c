@@ -87,6 +87,9 @@
 #include <environment.h>
 #include <errno.h>
 #include <net.h>
+#if defined(CONFIG_PROT_TCP)
+#include <net/tcp.h>
+#endif
 #include <net/tftp.h>
 #if defined(CONFIG_STATUS_LED)
 #include <miiphy.h>
@@ -106,6 +109,10 @@
 #include "rarp.h"
 #if defined(CONFIG_CMD_SNTP)
 #include "sntp.h"
+#endif
+
+#if defined(CONFIG_WXR5950AX12_WEB)
+extern void wxr_web_start_server(void);
 #endif
 
 DECLARE_GLOBAL_DATA_PTR;
@@ -426,6 +433,13 @@ restart:
 	 */
 	debug_cond(DEBUG_INT_STATE, "--- net_loop Init\n");
 	net_init_loop();
+#if defined(CONFIG_PROT_TCP)
+	tcp_init();
+#endif
+#if defined(CONFIG_WXR5950AX12_WEB)
+	if (protocol == WXR_WEB)
+		wxr_web_start_server();
+#endif
 
 	switch (net_check_prereq(protocol)) {
 	case 1:
@@ -552,6 +566,9 @@ restart:
 		 *	errors that may have happened.
 		 */
 		eth_rx();
+#if defined(CONFIG_PROT_TCP)
+		tcp_streams_poll();
+#endif
 
 		/*
 		 *	Abort if ctrl-c was pressed.
@@ -648,6 +665,9 @@ done:
 	/* Clear out the handlers */
 	net_set_udp_handler(NULL);
 	net_set_icmp_handler(NULL);
+#endif
+#if defined(CONFIG_PROT_TCP)
+	tcp_init();
 #endif
 	return ret;
 }
@@ -774,12 +794,16 @@ void net_set_timeout_handler(ulong iv, thand_f *f)
 	}
 }
 
-int net_send_udp_packet(uchar *ether, struct in_addr dest, int dport, int sport,
-		int payload_len)
+static int net_send_ip_packet(uchar *ether, struct in_addr dest, int dport,
+			      int sport, int payload_len, int proto, u8 action,
+			      u32 tcp_seq_num, u32 tcp_ack_num)
 {
 	uchar *pkt;
 	int eth_hdr_size;
 	int pkt_hdr_size;
+#if defined(CONFIG_PROT_TCP)
+	struct tcp_stream *tcp;
+#endif
 
 	/* make sure the net_tx_packet is initialized (net_init() was called) */
 	assert(net_tx_packet != NULL);
@@ -797,9 +821,26 @@ int net_send_udp_packet(uchar *ether, struct in_addr dest, int dport, int sport,
 	pkt = (uchar *)net_tx_packet;
 
 	eth_hdr_size = net_set_ether(pkt, ether, PROT_IP);
-	pkt += eth_hdr_size;
-	net_set_udp_header(pkt, dest, dport, sport, payload_len);
-	pkt_hdr_size = eth_hdr_size + IP_UDP_HDR_SIZE;
+	switch (proto) {
+	case IPPROTO_UDP:
+		net_set_udp_header(pkt + eth_hdr_size, dest, dport, sport,
+				   payload_len);
+		pkt_hdr_size = eth_hdr_size + IP_UDP_HDR_SIZE;
+		break;
+#if defined(CONFIG_PROT_TCP)
+	case IPPROTO_TCP:
+		tcp = tcp_stream_get(0, dest, dport, sport);
+		if (!tcp)
+			return -EINVAL;
+		pkt_hdr_size = eth_hdr_size +
+			tcp_set_tcp_header(tcp, pkt + eth_hdr_size, payload_len,
+					   action, tcp_seq_num, tcp_ack_num);
+		tcp_stream_put(tcp);
+		break;
+#endif
+	default:
+		return -EINVAL;
+	}
 
 	/* if MAC address was not discovered yet, do an ARP request */
 	if (memcmp(ether, net_null_ethaddr, 6) == 0) {
@@ -818,12 +859,29 @@ int net_send_udp_packet(uchar *ether, struct in_addr dest, int dport, int sport,
 		arp_request();
 		return 1;	/* waiting */
 	} else {
-		debug_cond(DEBUG_DEV_PKT, "sending UDP to %pI4/%pM\n",
+		debug_cond(DEBUG_DEV_PKT, "sending IP to %pI4/%pM\n",
 			   &dest, ether);
 		net_send_packet(net_tx_packet, pkt_hdr_size + payload_len);
 		return 0;	/* transmitted */
 	}
 }
+
+int net_send_udp_packet(uchar *ether, struct in_addr dest, int dport, int sport,
+		int payload_len)
+{
+	return net_send_ip_packet(ether, dest, dport, sport, payload_len,
+				  IPPROTO_UDP, 0, 0, 0);
+}
+
+#if defined(CONFIG_PROT_TCP)
+int net_send_tcp_packet(int payload_len, struct in_addr dhost, int dport,
+			int sport, u8 action, u32 tcp_seq_num, u32 tcp_ack_num)
+{
+	return net_send_ip_packet(net_server_ethaddr, dhost, dport, sport,
+				  payload_len, IPPROTO_TCP, action,
+				  tcp_seq_num, tcp_ack_num);
+}
+#endif
 
 #ifdef CONFIG_IP_DEFRAG
 /*
@@ -1214,6 +1272,11 @@ void net_process_received_packet(uchar *in_packet, int len)
 		if (ip->ip_p == IPPROTO_ICMP) {
 			receive_icmp(ip, len, src_ip, et);
 			return;
+#if defined(CONFIG_PROT_TCP)
+		} else if (ip->ip_p == IPPROTO_TCP) {
+			rxhand_tcp_f((union tcp_build_pkt *)ip, len);
+			return;
+#endif
 		} else if (ip->ip_p != IPPROTO_UDP) {	/* Only UDP packets */
 			return;
 		}
@@ -1331,6 +1394,7 @@ common:
 
 	case NETCONS:
 	case TFTPSRV:
+	case WXR_WEB:
 		if (net_ip.s_addr == 0) {
 			puts("*** ERROR: `ipaddr' not set\n");
 			return 1;

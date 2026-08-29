@@ -32,4 +32,25 @@ config NET_TFTP_VARS
 	  If unset, timeout and maximum are hard-defined as 1 second
 	  and 10 timouts per TFTP transfer.
 
+config PROT_TCP
+	bool "TCP stack"
+	help
+	  Enable the generic TCP stream framework.
+
+config PROT_TCP_SACK
+	bool "TCP selective acknowledgements"
+	depends on PROT_TCP
+	help
+	  Track received TCP segments so missing segments can be retransmitted
+	  without repeating data that has already arrived.
+
+config WXR5950AX12_WEB
+	bool "Buffalo WXR-5950AX12 fixed-IP and DHCP recovery web service"
+	depends on BUFFALO_WXR5950AX12 && CMD_NET
+	select PROT_TCP
+	select PROT_TCP_SACK
+	help
+	  Serve the same WXR recovery and installation console using either
+	  the fixed 192.168.11.1 address or an address obtained by DHCP.
+
 endif   # if NET

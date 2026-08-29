@@ -128,7 +128,9 @@ int usb_init(void)
 	if (controllers_initialized == 0)
 		puts("USB error: all controllers failed lowlevel init\n");
 
-	return usb_started ? 0 : -ENODEV;
+	if (usb_started)
+		return 0;
+	return controllers_initialized ? -ENODEV : -EIO;
 }
 
 /******************************************************************************

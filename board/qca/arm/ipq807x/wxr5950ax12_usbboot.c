@@ -42,6 +42,7 @@
 enum wxr_usb_role {
 	WXR_USB_RECOVERY,
 	WXR_USB_PRODUCTION,
+	WXR_USB_CONFIGURATION,
 };
 
 struct wxr_usb_layout {
@@ -70,6 +71,8 @@ static int wxr_partition_is_valid(block_dev_desc_t *device,
 {
 	if (!device->lba || !device->blksz || !device->block_read) {
 		printf("WXR USB: device for partition '%s' is invalid\n", name);
+		wxr_error_set(WXR_ERROR_TARGET, name, "USB partition geometry",
+			      -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -77,6 +80,8 @@ static int wxr_partition_is_valid(block_dev_desc_t *device,
 	    partition->size > device->lba - partition->start ||
 	    partition->blksz != device->blksz) {
 		printf("WXR USB: partition '%s' exceeds device bounds\n", name);
+		wxr_error_set(WXR_ERROR_TARGET, name, "USB partition geometry",
+			      -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -84,11 +89,15 @@ static int wxr_partition_is_valid(block_dev_desc_t *device,
 	    (allow_larger ? partition->size < expected_blocks :
 			    partition->size != expected_blocks)) {
 		printf("WXR USB: partition '%s' has unexpected geometry\n", name);
+		wxr_error_set(WXR_ERROR_TARGET, name, "USB partition geometry",
+			      -EINVAL, 0);
 		return -EINVAL;
 	}
 
 	if ((u64)partition->size > ~(u64)0 / partition->blksz) {
 		printf("WXR USB: partition '%s' byte size overflows\n", name);
+		wxr_error_set(WXR_ERROR_TARGET, name, "USB partition geometry",
+			      -EOVERFLOW, 0);
 		return -EOVERFLOW;
 	}
 
@@ -99,8 +108,11 @@ static int wxr_find_partition(block_dev_desc_t *device, const char *name,
 			      disk_partition_t *partition, u64 start,
 			      u64 blocks, int allow_larger)
 {
-	if (get_partition_info_efi_by_name(device, name, partition))
+	if (get_partition_info_efi_by_name(device, name, partition)) {
+		wxr_error_set(WXR_ERROR_TARGET, name, "USB partition discovery",
+			      -ENOENT, 0);
 		return -ENOENT;
+	}
 
 	return wxr_partition_is_valid(device, partition, name, start, blocks,
 				      allow_larger);
@@ -111,20 +123,44 @@ static int wxr_usb_open(enum wxr_usb_role role,
 {
 	struct wxr_usb_layout candidate;
 	block_dev_desc_t *device;
+	const char *target;
 	int storage_count = 0;
 	int match_count = 0;
 	int devnum;
+	int ret;
 	extern char usb_started;
+
+	switch (role) {
+	case WXR_USB_RECOVERY:
+		target = "USB recovery";
+		break;
+	case WXR_USB_PRODUCTION:
+		target = "USB production";
+		break;
+	case WXR_USB_CONFIGURATION:
+		target = "USB configuration";
+		break;
+	default:
+		return -EINVAL;
+	}
 
 	if (usb_started && usb_stop()) {
 		puts("WXR USB: failed to stop the previous USB scan\n");
+		wxr_error_set(WXR_ERROR_IO, target, "USB rescan", -EIO, 0);
 		return -EIO;
 	}
 
 	wxr_set_status(WXR_STATUS_WAITING);
-	if (usb_init()) {
+	ret = usb_init();
+	if (ret == -ENODEV) {
+		wxr_error_set(WXR_ERROR_TARGET, target, "device discovery", ret, 0);
+		return ret;
+	}
+	if (ret) {
 		puts("WXR USB: controller initialization failed\n");
-		return -EIO;
+		wxr_error_set(WXR_ERROR_IO, target, "controller initialization",
+			      ret, 0);
+		return ret;
 	}
 
 	for (devnum = 0; devnum < USB_MAX_STOR_DEV; devnum++) {
@@ -161,10 +197,19 @@ static int wxr_usb_open(enum wxr_usb_role role,
 					       WXR_USB_OVERLAY_START,
 					       WXR_USB_OVERLAY_MIN_BLOCKS, 1))
 				continue;
+			if (role == WXR_USB_CONFIGURATION &&
+			    wxr_find_partition(device,
+					       WXR_USB_RECOVERY_PARTITION,
+					       &candidate.recovery,
+					       WXR_USB_RECOVERY_START,
+					       WXR_USB_RECOVERY_BLOCKS, 0))
+				continue;
 		}
 
 		if (match_count) {
 			puts("WXR USB: multiple devices match the selected layout\n");
+			wxr_error_set(WXR_ERROR_TARGET, target, "device selection",
+				      -EINVAL, 0);
 			return -EINVAL;
 		}
 
@@ -174,11 +219,15 @@ static int wxr_usb_open(enum wxr_usb_role role,
 
 	if (!storage_count) {
 		puts("WXR USB: no USB storage device found\n");
+		wxr_error_set(WXR_ERROR_TARGET, target, "mass-storage discovery",
+			      -ENODEV, 0);
 		return -ENODEV;
 	}
 
 	if (!match_count) {
 		puts("WXR USB: no device matches the selected partition layout\n");
+		wxr_error_set(WXR_ERROR_TARGET, target, "partition contract",
+			      -ENOENT, 0);
 		return -ENOENT;
 	}
 
@@ -197,6 +246,8 @@ static int wxr_usb_read_fit(const struct wxr_usb_layout *layout,
 
 	if (layout->device->blksz < sizeof(struct fdt_header)) {
 		puts("WXR USB: device block is shorter than a FIT header\n");
+		wxr_error_set(WXR_ERROR_TARGET, "USB FIT", "block geometry",
+			      -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -204,11 +255,14 @@ static int wxr_usb_read_fit(const struct wxr_usb_layout *layout,
 						 partition->start, 1, fit);
 	if (read_blocks != 1) {
 		puts("WXR USB: failed to read the FIT header\n");
+		wxr_error_set(WXR_ERROR_IO, "USB FIT", "header read", -EIO, 0);
 		return -EIO;
 	}
 
 	if (fdt_check_header(fit)) {
 		puts("WXR USB: partition does not begin with a FIT\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB FIT", "FIT header",
+			      -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -216,12 +270,16 @@ static int wxr_usb_read_fit(const struct wxr_usb_layout *layout,
 	if (total_size < sizeof(struct fdt_header) ||
 	    total_size > WXR_INPUT_MAX_SIZE || total_size > partition_length) {
 		puts("WXR USB: FIT length is outside the input or partition boundary\n");
+		wxr_error_set(WXR_ERROR_CAPACITY, "USB FIT", "FIT length",
+			      -EFBIG, 0);
 		return -EFBIG;
 	}
 
 	blocks = DIV_ROUND_UP(total_size, partition->blksz);
 	if (blocks > partition->size) {
 		puts("WXR USB: rounded FIT read exceeds its partition\n");
+		wxr_error_set(WXR_ERROR_CAPACITY, "USB FIT", "bounded read",
+			      -EFBIG, 0);
 		return -EFBIG;
 	}
 
@@ -230,6 +288,7 @@ static int wxr_usb_read_fit(const struct wxr_usb_layout *layout,
 						 partition->start, blocks, fit);
 	if (read_blocks != blocks) {
 		puts("WXR USB: FIT read was incomplete\n");
+		wxr_error_set(WXR_ERROR_IO, "USB FIT", "bounded read", -EIO, 0);
 		return -EIO;
 	}
 #ifdef CONFIG_SHOW_ACTIVITY
@@ -238,6 +297,8 @@ static int wxr_usb_read_fit(const struct wxr_usb_layout *layout,
 
 	if (fdt_check_header(fit) || fdt_totalsize(fit) != total_size) {
 		puts("WXR USB: FIT header changed during the bounded read\n");
+		wxr_error_set(WXR_ERROR_VERIFY, "USB FIT", "readback header",
+			      -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -298,13 +359,18 @@ static int wxr_validate_usb_production(const struct wxr_member *image,
 
 	if (!image || !image->data || !rootfs ||
 	    image->length < sizeof(struct fdt_header) ||
-	    image->length > WXR_INPUT_MAX_SIZE)
+	    image->length > WXR_INPUT_MAX_SIZE) {
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production", "FIT input",
+			      -EINVAL, 0);
 		return -EINVAL;
+	}
 
 	fit = image->data;
 	if (fdt_check_header(fit) || fdt_totalsize(fit) != image->length ||
 	    !fit_check_format(fit)) {
 		puts("WXR USB production: malformed FIT\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production", "FIT structure",
+			      -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -317,6 +383,8 @@ static int wxr_validate_usb_production(const struct wxr_member *image,
 	if (config_node < 0 || kernel_node < 0 || fdt_node < 0 ||
 	    contract_node < 0) {
 		puts("WXR USB production: required FIT node is missing\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production",
+			      "FIT configuration", -ENOENT, 0);
 		return -ENOENT;
 	}
 
@@ -332,6 +400,8 @@ static int wxr_validate_usb_production(const struct wxr_member *image,
 	    kernel_size > WXR_KERNEL_MAX_SIZE ||
 	    !wxr_fit_contains(image, kernel_data, kernel_size)) {
 		puts("WXR USB production: kernel contract is invalid\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production",
+			      "kernel contract", -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -343,6 +413,8 @@ static int wxr_validate_usb_production(const struct wxr_member *image,
 	    fdt_check_header(fdt_data) || fdt_totalsize(fdt_data) != fdt_size ||
 	    fdt_node_check_compatible(fdt_data, 0, WXR_BOARD_COMPATIBLE)) {
 		puts("WXR USB production: device-tree contract is invalid\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production",
+			      "device-tree contract", -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -356,6 +428,8 @@ static int wxr_validate_usb_production(const struct wxr_member *image,
 	    !fit_image_verify(fit, fdt_node) ||
 	    !fit_image_verify(fit, contract_node)) {
 		puts("WXR USB production: FIT component hash failed\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production",
+			      "FIT component hashes", -EIO, 0);
 		return -EIO;
 	}
 
@@ -367,6 +441,8 @@ static int wxr_validate_usb_production(const struct wxr_member *image,
 	    fdt_node_check_compatible(contract_data, 0,
 				      WXR_USB_CONTRACT_COMPATIBLE)) {
 		puts("WXR USB production: boot contract data is invalid\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production",
+			      "boot contract", -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -376,6 +452,8 @@ static int wxr_validate_usb_production(const struct wxr_member *image,
 	if (!version || property_length != sizeof(*version) ||
 	    fdt32_to_cpu(*version) != WXR_USB_CONTRACT_VERSION) {
 		puts("WXR USB production: boot contract version is invalid\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production",
+			      "contract version", -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -384,6 +462,8 @@ static int wxr_validate_usb_production(const struct wxr_member *image,
 	if (!role || property_length != sizeof("usb-production") ||
 	    memcmp(role, "usb-production", sizeof("usb-production"))) {
 		puts("WXR USB production: image role is invalid\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production", "image role",
+			      -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -391,12 +471,16 @@ static int wxr_validate_usb_production(const struct wxr_member *image,
 				   "openwrt,rootfs-bytes", &property_length);
 	if (!rootfs_bytes || property_length != sizeof(*rootfs_bytes)) {
 		puts("WXR USB production: rootfs byte contract is invalid\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production",
+			      "rootfs length contract", -EINVAL, 0);
 		return -EINVAL;
 	}
 	memcpy(&encoded_bytes, rootfs_bytes, sizeof(encoded_bytes));
 	rootfs->bytes_used = fdt64_to_cpu(encoded_bytes);
 	if (!rootfs->bytes_used) {
 		puts("WXR USB production: rootfs byte contract is zero\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production",
+			      "rootfs length contract", -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -405,6 +489,8 @@ static int wxr_validate_usb_production(const struct wxr_member *image,
 				    &property_length);
 	if (!rootfs_sha256 || property_length != SHA256_SUM_LEN) {
 		puts("WXR USB production: rootfs SHA-256 contract is invalid\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB production",
+			      "rootfs hash contract", -EINVAL, 0);
 		return -EINVAL;
 	}
 	memcpy(rootfs->sha256, rootfs_sha256, SHA256_SUM_LEN);
@@ -471,15 +557,23 @@ static int wxr_verify_usb_rootfs(const struct wxr_usb_layout *layout,
 	int ret;
 
 	if (rootfs->bytes_used > wxr_partition_bytes(&layout->rootfs) ||
-	    rootfs->bytes_used > SIZE_MAX)
+	    rootfs->bytes_used > SIZE_MAX) {
+		wxr_error_set(WXR_ERROR_CAPACITY, "USB rootfs", "contract length",
+			      -EFBIG, 0);
 		return -EFBIG;
+	}
 
 	header = memalign(ARCH_DMA_MINALIGN, layout->rootfs.blksz);
-	if (!header)
+	if (!header) {
+		wxr_error_set(WXR_ERROR_INTERNAL, "USB rootfs", "read buffer",
+			      -ENOMEM, 0);
 		return -ENOMEM;
+	}
 	if (layout->device->block_read(layout->devnum, layout->rootfs.start,
 				       1, header) != 1) {
 		free(header);
+		wxr_error_set(WXR_ERROR_IO, "USB rootfs", "header read",
+			      -EIO, 0);
 		return -EIO;
 	}
 
@@ -489,16 +583,22 @@ static int wxr_verify_usb_rootfs(const struct wxr_usb_layout *layout,
 	free(header);
 	if (ret || bytes_used != rootfs->bytes_used) {
 		puts("WXR USB production: SquashFS length differs from FIT contract\n");
+		wxr_error_set(WXR_ERROR_VERIFY, "USB rootfs",
+			      "SquashFS length contract", -EINVAL, 0);
 		return -EINVAL;
 	}
 
 	ret = wxr_hash_usb_partition(layout, &layout->rootfs,
 				     rootfs->bytes_used, calculated);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, "USB rootfs", "content read", ret, 0);
 		return ret;
+	}
 
 	if (memcmp(calculated, rootfs->sha256, SHA256_SUM_LEN)) {
 		puts("WXR USB production: rootfs SHA-256 mismatch\n");
+		wxr_error_set(WXR_ERROR_VERIFY, "USB rootfs", "SHA-256",
+			      -EIO, 0);
 		return -EIO;
 	}
 
@@ -522,12 +622,17 @@ static int wxr_boot_usb_production_fit(cmd_tbl_t *cmdtp,
 
 	if (!layout->rootfs.uuid[0]) {
 		puts("WXR USB production: rootfs PARTUUID is missing\n");
+		wxr_error_set(WXR_ERROR_TARGET, "USB production", "rootfs PARTUUID",
+			      -EINVAL, 0);
 		return -EINVAL;
 	}
 
 	if (had_bootargs) {
-		if (strlen(current) >= sizeof(previous_bootargs))
+		if (strlen(current) >= sizeof(previous_bootargs)) {
+			wxr_error_set(WXR_ERROR_BOOT, "USB production", "bootargs",
+				      -E2BIG, 0);
 			return -E2BIG;
+		}
 		strlcpy(previous_bootargs, current, sizeof(previous_bootargs));
 	}
 
@@ -539,11 +644,17 @@ static int wxr_boot_usb_production_fit(cmd_tbl_t *cmdtp,
 			  " fstools_partname_fallback_scan=1"
 			  " fstools_overlay_fstype=ext4",
 			  layout->rootfs.uuid);
-	if (length < 0 || length >= (int)sizeof(bootargs))
+	if (length < 0 || length >= (int)sizeof(bootargs)) {
+		wxr_error_set(WXR_ERROR_BOOT, "USB production", "bootargs",
+			      -E2BIG, 0);
 		return -E2BIG;
+	}
 
-	if (setenv("bootargs", bootargs))
+	if (setenv("bootargs", bootargs)) {
+		wxr_error_set(WXR_ERROR_BOOT, "USB production", "bootargs",
+			      -ENOMEM, 0);
 		return -ENOMEM;
+	}
 
 	wxr_set_status(WXR_STATUS_SUCCESS);
 	ret = do_bootm(cmdtp, 0, 2, bootm_argv);
@@ -555,6 +666,7 @@ static int wxr_boot_usb_production_fit(cmd_tbl_t *cmdtp,
 
 	printf("WXR USB production: bootm returned %d\n", ret);
 	wxr_set_status(WXR_STATUS_FAILURE);
+	wxr_error_set(WXR_ERROR_BOOT, "USB production", "bootm handoff", ret, 0);
 	return -EIO;
 }
 
@@ -718,6 +830,40 @@ static int wxr_clear_usb_overlay(const struct wxr_usb_layout *layout)
 	return 0;
 }
 
+int wxr_usb_reset_configuration(void)
+{
+	struct wxr_usb_layout layout;
+	enum wxr_error_kind kind;
+	int target_changed;
+	int ret;
+
+	wxr_set_status(WXR_STATUS_VALIDATING);
+	ret = wxr_usb_open(WXR_USB_CONFIGURATION, &layout);
+	if (ret)
+		return ret;
+	if (!layout.device->block_read || !layout.device->block_write) {
+		wxr_error_set(WXR_ERROR_TARGET, "USB configuration",
+			      "read/write support", -EIO, 0);
+		return -EIO;
+	}
+
+	wxr_set_status(WXR_STATUS_WRITING);
+	ret = wxr_clear_usb_overlay(&layout);
+	if (ret) {
+		kind = ret == -ENOMEM ? WXR_ERROR_INTERNAL :
+		       ret == -EIO ? WXR_ERROR_VERIFY : WXR_ERROR_TARGET;
+		target_changed = ret == -EIO;
+		wxr_error_set(kind, "USB configuration",
+			      "rootfs_data first-MiB reset", ret,
+			      target_changed);
+		wxr_set_status(WXR_STATUS_FAILURE);
+		return ret;
+	}
+
+	wxr_set_status(WXR_STATUS_SUCCESS);
+	return 0;
+}
+
 int wxr_usb_write_recovery(const struct wxr_image *image)
 {
 	struct wxr_usb_layout layout;
@@ -737,27 +883,51 @@ int wxr_usb_write_recovery(const struct wxr_image *image)
 
 	member.data = (const void *)image->address;
 	member.length = image->length;
+	if (!layout.device->block_write) {
+		wxr_error_set(WXR_ERROR_TARGET, "USB recovery", "write support",
+			      -EIO, 0);
+		return -EIO;
+	}
+	if (member.length > wxr_partition_bytes(&layout.recovery)) {
+		wxr_error_set(WXR_ERROR_CAPACITY, "USB recovery",
+			      "partition capacity", -EFBIG, 0);
+		return -EFBIG;
+	}
 	wxr_sha256(member.data, member.length, expected);
 	wxr_set_status(WXR_STATUS_WRITING);
 	ret = wxr_write_usb_member(&layout, &layout.recovery, &member);
-	if (ret)
+	if (ret) {
+		wxr_error_set(ret == -ENOMEM ? WXR_ERROR_INTERNAL : WXR_ERROR_IO,
+			      "USB recovery", "partition write", ret, 1);
 		return ret;
+	}
 	ret = wxr_verify_usb_member(&layout, &layout.recovery, &member,
 				    expected);
 	if (ret) {
 		puts("WXR USB recovery write: readback SHA-256 mismatch\n");
+		wxr_error_set(WXR_ERROR_VERIFY, "USB recovery", "readback SHA-256",
+			      ret, 1);
 		return ret;
 	}
 
 	ret = wxr_usb_read_fit(&layout, &layout.recovery, &readback_length);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_VERIFY, "USB recovery", "FIT readback",
+			      ret, 1);
 		return ret;
+	}
 	ret = wxr_set_input(readback_length, &readback);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_VERIFY, "USB recovery", "FIT readback",
+			      ret, 1);
 		return ret;
+	}
 	ret = wxr_validate_recovery(&readback);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_VERIFY, "USB recovery", "FIT readback",
+			      ret, 1);
 		return ret;
+	}
 
 	wxr_set_status(WXR_STATUS_SUCCESS);
 	return 0;
@@ -788,11 +958,15 @@ int wxr_usb_write_production(const struct wxr_image *image)
 		return ret;
 	if (root_bytes_used != rootfs_contract.bytes_used) {
 		puts("WXR USB production write: rootfs length contract mismatch\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB sysupgrade",
+			      "rootfs length contract", -EINVAL, 0);
 		return -EINVAL;
 	}
 	wxr_sha256(archive.root.data, root_bytes_used, contract_sha256);
 	if (memcmp(contract_sha256, rootfs_contract.sha256, SHA256_SUM_LEN)) {
 		puts("WXR USB production write: rootfs contract hash mismatch\n");
+		wxr_error_set(WXR_ERROR_IMAGE, "USB sysupgrade",
+			      "rootfs contract hash", -EIO, 0);
 		return -EIO;
 	}
 
@@ -804,49 +978,77 @@ int wxr_usb_write_production(const struct wxr_image *image)
 				 WXR_USB_RECOVERY_BLOCKS, 0);
 	if (ret) {
 		puts("WXR USB production write: recovery partition is invalid\n");
+		wxr_error_set(WXR_ERROR_TARGET, "USB production",
+			      "recovery partition contract", ret, 0);
 		return ret;
 	}
 	if (archive.kernel.length > wxr_partition_bytes(&layout.production) ||
-	    archive.root.length > wxr_partition_bytes(&layout.rootfs))
+	    archive.root.length > wxr_partition_bytes(&layout.rootfs)) {
+		wxr_error_set(WXR_ERROR_CAPACITY, "USB production",
+			      "partition capacity", -EFBIG, 0);
 		return -EFBIG;
+	}
+	if (!layout.device->block_write) {
+		wxr_error_set(WXR_ERROR_TARGET, "USB production", "write support",
+			      -EIO, 0);
+		return -EIO;
+	}
 
 	wxr_sha256(archive.kernel.data, archive.kernel.length, kernel_sha256);
 	wxr_sha256(archive.root.data, archive.root.length, root_sha256);
 	wxr_set_status(WXR_STATUS_WRITING);
 
 	ret = wxr_write_usb_member(&layout, &layout.rootfs, &archive.root);
-	if (ret)
+	if (ret) {
+		wxr_error_set(ret == -ENOMEM ? WXR_ERROR_INTERNAL : WXR_ERROR_IO,
+			      "USB production", "rootfs write", ret, 1);
 		return ret;
+	}
 	ret = wxr_verify_usb_member(&layout, &layout.rootfs, &archive.root,
 				    root_sha256);
 	if (ret) {
 		puts("WXR USB production write: rootfs readback mismatch\n");
+		wxr_error_set(WXR_ERROR_VERIFY, "USB production",
+			      "rootfs readback", ret, 1);
 		return ret;
 	}
 	ret = wxr_clear_usb_overlay(&layout);
 	if (ret) {
 		puts("WXR USB production write: overlay reset verification failed\n");
+		wxr_error_set(WXR_ERROR_VERIFY, "USB production", "overlay reset",
+			      ret, 1);
 		return ret;
 	}
 	ret = wxr_write_usb_member(&layout, &layout.production,
 				   &archive.kernel);
-	if (ret)
+	if (ret) {
+		wxr_error_set(ret == -ENOMEM ? WXR_ERROR_INTERNAL : WXR_ERROR_IO,
+			      "USB production", "FIT write", ret, 1);
 		return ret;
+	}
 	ret = wxr_verify_usb_member(&layout, &layout.production,
 				    &archive.kernel, kernel_sha256);
 	if (ret) {
 		puts("WXR USB production write: FIT readback mismatch\n");
+		wxr_error_set(WXR_ERROR_VERIFY, "USB production", "FIT readback",
+			      ret, 1);
 		return ret;
 	}
 
 	ret = wxr_usb_read_fit(&layout, &layout.production, &readback_length);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_VERIFY, "USB production", "FIT readback",
+			      ret, 1);
 		return ret;
+	}
 	readback_fit.data = (const void *)WXR_INPUT_ADDRESS;
 	readback_fit.length = readback_length;
 	ret = wxr_validate_usb_production(&readback_fit, &rootfs_contract);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_VERIFY, "USB production", "FIT readback",
+			      ret, 1);
 		return ret;
+	}
 
 	wxr_set_status(WXR_STATUS_SUCCESS);
 	return 0;
@@ -860,6 +1062,7 @@ static int do_wxr_usbboot(cmd_tbl_t *cmdtp, int flag, int argc,
 	(void)flag;
 	if (argc != 2)
 		return CMD_RET_USAGE;
+	wxr_error_clear();
 
 	if (!strcmp(argv[1], "recovery"))
 		ret = wxr_usb_boot_recovery(cmdtp);
@@ -868,8 +1071,10 @@ static int do_wxr_usbboot(cmd_tbl_t *cmdtp, int flag, int argc,
 	else
 		return CMD_RET_USAGE;
 
-	if (ret)
+	if (ret) {
+		printf("WXR USB: %s\n", wxr_error_get(NULL));
 		wxr_set_status(WXR_STATUS_FAILURE);
+	}
 	return ret ? CMD_RET_FAILURE : CMD_RET_SUCCESS;
 }
 

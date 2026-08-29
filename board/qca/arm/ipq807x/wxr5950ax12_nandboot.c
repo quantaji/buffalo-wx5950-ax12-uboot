@@ -7,6 +7,7 @@
 #include <common.h>
 #include <command.h>
 #include <errno.h>
+#include <jffs2/load_kernel.h>
 #include <malloc.h>
 #include <nand.h>
 #include <ubi_uboot.h>
@@ -24,7 +25,12 @@
 #define WXR_NAND_KERNEL_VOLUME		"kernel"
 #define WXR_NAND_ROOTFS_VOLUME		"rootfs"
 #define WXR_NAND_DATA_VOLUME		"rootfs_data"
+#define WXR_NAND_COMPAT_ROOTFS_VOLUME	"ubi_rootfs"
+#define WXR_NAND_FW_HASH_VOLUME		"fw_hash"
 #define WXR_NAND_IO_BUFFER_SIZE		(64UL << 10)
+
+static const u8 wxr_nand_fw_hash_reset[] =
+	"00000000000000000000000000000000";
 
 struct wxr_nand_partition {
 	nand_info_t *nand;
@@ -44,6 +50,8 @@ static int wxr_resolve_nand_partition(const char *name,
 	if (flash->flash_type != SMEM_BOOT_NAND_FLASH &&
 	    flash->flash_type != SMEM_BOOT_QSPI_NAND_FLASH) {
 		puts("WXR NAND: boot flash is not NAND\n");
+		wxr_error_set(WXR_ERROR_TARGET, name, "boot flash type",
+			      -ENODEV, 0);
 		return -ENODEV;
 	}
 
@@ -51,6 +59,8 @@ static int wxr_resolve_nand_partition(const char *name,
 	    smem_getpart((char *)name, &start_blocks, &size_blocks) ||
 	    !size_blocks) {
 		printf("WXR NAND: SMEM partition '%s' is unavailable\n", name);
+		wxr_error_set(WXR_ERROR_TARGET, name, "SMEM partition lookup",
+			      -ENOENT, 0);
 		return -ENOENT;
 	}
 
@@ -62,6 +72,8 @@ static int wxr_resolve_nand_partition(const char *name,
 	    offset % partition->nand->erasesize ||
 	    length % partition->nand->erasesize) {
 		printf("WXR NAND: SMEM partition '%s' has invalid bounds\n", name);
+		wxr_error_set(WXR_ERROR_TARGET, name, "SMEM partition bounds",
+			      -EINVAL, 0);
 		return -EINVAL;
 	}
 
@@ -73,30 +85,36 @@ static int wxr_resolve_nand_partition(const char *name,
 static int wxr_attach_nand_partition(const char *name,
 				     struct wxr_nand_partition *partition)
 {
+	struct mtd_device *device;
+	struct part_info *part;
+	u8 part_number;
 	int ret;
 
 	ret = wxr_resolve_nand_partition(name, partition);
 	if (ret)
 		return ret;
+	ret = mtdparts_init();
+	if (ret || find_dev_and_part(name, &device, &part_number, &part)) {
+		printf("WXR NAND: mtdparts partition '%s' is unavailable\n", name);
+		wxr_error_set(WXR_ERROR_TARGET, name, "mtdparts partition lookup",
+			      -ENOENT, 0);
+		return -ENOENT;
+	}
+	if (device->id->type != MTD_DEV_TYPE_NAND ||
+	    device->id->num != CONFIG_NAND_FLASH_INFO_IDX ||
+	    part->offset != partition->offset ||
+	    part->size != partition->length) {
+		printf("WXR NAND: SMEM and mtdparts disagree for '%s'\n", name);
+		wxr_error_set(WXR_ERROR_TARGET, name, "SMEM/mtdparts boundary",
+			      -EINVAL, 0);
+		return -EINVAL;
+	}
 	ret = ubi_part((char *)name, NULL);
-	if (ret)
+	if (ret) {
 		printf("WXR NAND: cannot attach UBI partition '%s'\n", name);
+		wxr_error_set(WXR_ERROR_TARGET, name, "UBI attach", ret, 0);
+	}
 	return ret;
-}
-
-static int wxr_erase_nand_partition(
-		const struct wxr_nand_partition *partition)
-{
-	nand_erase_options_t options;
-
-	memset(&options, 0, sizeof(options));
-	options.offset = partition->offset;
-	options.length = partition->length;
-	options.lim = partition->length;
-	options.scrub = 0;
-	options.spread = 0;
-
-	return nand_erase_opts(partition->nand, &options);
 }
 
 static int wxr_get_volume_capacity(const char *name, long long *capacity)
@@ -122,20 +140,31 @@ static int wxr_prepare_volume(const char *name, size_t length)
 
 	exists = !wxr_get_volume_capacity(name, &capacity);
 	available = ubi_get_available_bytes();
-	if (available < 0)
+	if (available < 0) {
+		wxr_error_set(WXR_ERROR_IO, name, "UBI capacity query",
+			      available, 0);
 		return available;
+	}
 	if ((u64)length > (u64)available + capacity) {
 		printf("WXR NAND: volume '%s' has insufficient capacity\n", name);
+		wxr_error_set(WXR_ERROR_CAPACITY, name, "UBI volume capacity",
+			      -ENOSPC, 0);
 		return -ENOSPC;
 	}
 
 	if (exists) {
 		ret = ubi_volume_remove((char *)name);
-		if (ret)
+		if (ret) {
+			wxr_error_set(WXR_ERROR_IO, name, "UBI volume replacement",
+				      -ret, 1);
 			return -ret;
+		}
 	}
 
 	ret = ubi_volume_create((char *)name, length, 1);
+	if (ret)
+		wxr_error_set(WXR_ERROR_IO, name, "UBI volume creation",
+			      -ret, 1);
 	return ret ? -ret : 0;
 }
 
@@ -169,6 +198,78 @@ static int wxr_write_volume(const char *name, const struct wxr_member *member)
 	}
 
 	return 0;
+}
+
+static int wxr_reformat_nand_partition(
+		const char *name, struct wxr_nand_partition *partition)
+{
+	nand_erase_options_t options = {
+		.length = partition->length,
+		.offset = partition->offset,
+		.quiet = 0,
+		.jffs2 = 0,
+		.scrub = 0,
+		.spread = 0,
+		.lim = partition->length,
+	};
+	int ret;
+
+	printf("WXR NAND: rebuilding invalid UBI partition '%s'\n", name);
+	ret = nand_erase_opts(partition->nand, &options);
+	if (ret) {
+		if (ret > 0)
+			ret = -ret;
+		wxr_error_set(WXR_ERROR_IO, name, "partition erase", ret, 1);
+		return ret;
+	}
+
+	ret = wxr_attach_nand_partition(name, partition);
+	if (ret) {
+		if (ret > 0)
+			ret = -ret;
+		wxr_error_set(WXR_ERROR_IO, name, "UBI reformat attach", ret, 1);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int wxr_rebuild_kernel_partition(
+		const char *name, struct wxr_nand_partition *partition,
+		size_t kernel_length)
+{
+	struct wxr_member fw_hash = {
+		.data = wxr_nand_fw_hash_reset,
+		.length = sizeof(wxr_nand_fw_hash_reset) - 1,
+	};
+	int ret;
+
+	ret = wxr_reformat_nand_partition(name, partition);
+	if (ret)
+		return ret;
+
+	ret = ubi_volume_create(WXR_NAND_COMPAT_ROOTFS_VOLUME, 1, 1);
+	if (ret)
+		goto create_failed;
+	ret = ubi_volume_create(WXR_NAND_FW_HASH_VOLUME, 1, 0);
+	if (ret)
+		goto create_failed;
+	ret = wxr_write_volume(WXR_NAND_FW_HASH_VOLUME, &fw_hash);
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, name, "fw_hash write", ret, 1);
+		return ret;
+	}
+	ret = ubi_volume_create(WXR_NAND_KERNEL_VOLUME, kernel_length, 1);
+	if (ret)
+		goto create_failed;
+
+	return 0;
+
+create_failed:
+	ret = -ret;
+	wxr_error_set(ret == -ENOSPC ? WXR_ERROR_CAPACITY : WXR_ERROR_IO,
+		      name, "UBI volume creation", ret, 1);
+	return ret;
 }
 
 static int wxr_hash_volume(const char *name, size_t length,
@@ -209,14 +310,14 @@ static int wxr_verify_volume_hash(const char *name, size_t length,
 				  const u8 expected[SHA256_SUM_LEN])
 {
 	u8 actual[SHA256_SUM_LEN];
-	long long used;
+	long long capacity;
 	int ret;
 
-	ret = ubi_volume_get_info((char *)name, &used, NULL);
+	ret = ubi_volume_get_info((char *)name, NULL, &capacity);
 	if (ret)
 		return -ret;
-	if (used != length)
-		return -EIO;
+	if ((u64)capacity < (u64)length)
+		return -EFBIG;
 
 	ret = wxr_hash_volume(name, length, actual);
 	if (ret)
@@ -279,6 +380,8 @@ int wxr_nand_boot_production(void)
 
 	puts("WXR NAND production: bootipq failed\n");
 	wxr_set_status(WXR_STATUS_FAILURE);
+	wxr_error_set(WXR_ERROR_BOOT, "NAND production", "bootipq handoff",
+		      -EIO, 0);
 	return -EIO;
 }
 
@@ -295,17 +398,25 @@ int wxr_nand_boot_recovery(cmd_tbl_t *cmdtp)
 	if (ret)
 		return ret;
 	ret = ubi_volume_get_info(WXR_NAND_KERNEL_VOLUME, &used, &capacity);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_TARGET, "NAND recovery", "kernel volume",
+			      -ret, 0);
 		return -ret;
+	}
 	if (used <= 0 || used > WXR_INPUT_MAX_SIZE || used > capacity) {
 		puts("WXR NAND recovery: kernel volume length is invalid\n");
+		wxr_error_set(WXR_ERROR_CAPACITY, "NAND recovery",
+			      "kernel volume length", -EFBIG, 0);
 		return -EFBIG;
 	}
 
 	wxr_set_status(WXR_STATUS_RECEIVING);
 	ret = wxr_load_volume(WXR_NAND_KERNEL_VOLUME, used, &image);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, "NAND recovery", "kernel volume read",
+			      ret, 0);
 		return ret;
+	}
 	wxr_set_status(WXR_STATUS_VALIDATING);
 	return wxr_boot_recovery(cmdtp, &image);
 }
@@ -315,7 +426,7 @@ int wxr_nand_write_recovery(const struct wxr_image *image)
 	struct wxr_nand_partition partition;
 	struct wxr_member member;
 	u8 expected[SHA256_SUM_LEN];
-	long long available;
+	int rebuild = 0;
 	int ret;
 
 	wxr_set_status(WXR_STATUS_VALIDATING);
@@ -326,45 +437,51 @@ int wxr_nand_write_recovery(const struct wxr_image *image)
 					 &partition);
 	if (ret)
 		return ret;
-	if (image->length > partition.length)
+	if (image->length > partition.length) {
+		wxr_error_set(WXR_ERROR_CAPACITY, "NAND recovery",
+			      "partition capacity", -EFBIG, 0);
 		return -EFBIG;
+	}
 
 	member.data = (const void *)image->address;
 	member.length = image->length;
 	wxr_sha256(member.data, member.length, expected);
 
-	ret = ubi_part(WXR_NAND_RECOVERY_PARTITION, NULL);
-	if (!ret) {
-		ret = wxr_prepare_volume(WXR_NAND_KERNEL_VOLUME, image->length);
-		if (ret)
-			return ret;
-	} else {
-		wxr_set_status(WXR_STATUS_WRITING);
-		ret = wxr_erase_nand_partition(&partition);
-		if (ret)
-			return ret;
-		ret = ubi_part(WXR_NAND_RECOVERY_PARTITION, NULL);
-		if (ret)
-			return ret;
-		available = ubi_get_available_bytes();
-		if (available < image->length)
-			return -ENOSPC;
-		ret = ubi_volume_create(WXR_NAND_KERNEL_VOLUME,
-					image->length, 1);
-		if (ret)
-			return -ret;
-	}
+	ret = wxr_attach_nand_partition(WXR_NAND_RECOVERY_PARTITION,
+					&partition);
+	if (ret == EINVAL)
+		rebuild = 1;
+	else if (ret)
+		return ret;
 
 	wxr_set_status(WXR_STATUS_WRITING);
+	if (rebuild)
+		ret = wxr_rebuild_kernel_partition(
+			WXR_NAND_RECOVERY_PARTITION, &partition, image->length);
+	else
+		ret = wxr_prepare_volume(WXR_NAND_KERNEL_VOLUME, image->length);
+	if (ret)
+		return ret;
+
 	ret = wxr_write_volume(WXR_NAND_KERNEL_VOLUME, &member);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, "NAND recovery", "kernel volume write",
+			      ret, 1);
 		return ret;
-	ret = ubi_part(WXR_NAND_RECOVERY_PARTITION, NULL);
-	if (ret)
+	}
+	ret = wxr_attach_nand_partition(WXR_NAND_RECOVERY_PARTITION,
+					&partition);
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, "NAND recovery", "readback attach",
+			      ret, 1);
 		return ret;
+	}
 	ret = wxr_verify_recovery_volume(image->length, expected);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_VERIFY, "NAND recovery", "readback image",
+			      ret, 1);
 		return ret;
+	}
 
 	wxr_set_status(WXR_STATUS_SUCCESS);
 	return 0;
@@ -372,18 +489,47 @@ int wxr_nand_write_recovery(const struct wxr_image *image)
 
 static int wxr_precheck_user_volumes(size_t root_length)
 {
+	u64 reclaimable;
+	u64 rounded_root;
 	long long root_capacity;
 	long long data_capacity;
 	long long available;
+	long long leb_size;
 
 	wxr_get_volume_capacity(WXR_NAND_ROOTFS_VOLUME, &root_capacity);
 	wxr_get_volume_capacity(WXR_NAND_DATA_VOLUME, &data_capacity);
 	available = ubi_get_available_bytes();
-	if (available < 0)
+	if (available < 0) {
+		wxr_error_set(WXR_ERROR_IO, "NAND production",
+			      "user_property capacity query", available, 0);
 		return available;
+	}
+	leb_size = ubi_get_usable_leb_size();
+	if (leb_size <= 0) {
+		int ret = leb_size ? leb_size : -EINVAL;
 
-	if ((u64)root_length >= (u64)available + root_capacity + data_capacity) {
+		wxr_error_set(WXR_ERROR_IO, "NAND production",
+			      "user_property LEB size query", ret, 0);
+		return ret;
+	}
+	if ((u64)available > ~(u64)0 - (u64)root_capacity ||
+	    (u64)available + (u64)root_capacity >
+					~(u64)0 - (u64)data_capacity ||
+	    (u64)root_length > ~(u64)0 - ((u64)leb_size - 1)) {
+		wxr_error_set(WXR_ERROR_CAPACITY, "NAND production",
+			      "user_property capacity arithmetic", -EOVERFLOW, 0);
+		return -EOVERFLOW;
+	}
+
+	reclaimable = (u64)available + (u64)root_capacity +
+		      (u64)data_capacity;
+	rounded_root = DIV_ROUND_UP((u64)root_length, (u64)leb_size) *
+		       (u64)leb_size;
+	if (rounded_root > reclaimable ||
+	    reclaimable - rounded_root < (u64)leb_size) {
 		puts("WXR NAND production: user_property capacity is insufficient\n");
+		wxr_error_set(WXR_ERROR_CAPACITY, "NAND production",
+			      "rootfs and rootfs_data LEB capacity", -ENOSPC, 0);
 		return -ENOSPC;
 	}
 
@@ -397,10 +543,15 @@ static int wxr_precheck_kernel_volume(size_t kernel_length)
 
 	wxr_get_volume_capacity(WXR_NAND_KERNEL_VOLUME, &kernel_capacity);
 	available = ubi_get_available_bytes();
-	if (available < 0)
+	if (available < 0) {
+		wxr_error_set(WXR_ERROR_IO, "NAND production",
+			      "kernel capacity query", available, 0);
 		return available;
+	}
 	if ((u64)kernel_length > (u64)available + kernel_capacity) {
-		puts("WXR NAND production: rootfs capacity is insufficient\n");
+		puts("WXR NAND production: kernel capacity is insufficient\n");
+		wxr_error_set(WXR_ERROR_CAPACITY, "NAND production",
+			      "kernel capacity", -ENOSPC, 0);
 		return -ENOSPC;
 	}
 
@@ -466,6 +617,8 @@ int wxr_nand_write_production(const struct wxr_image *image)
 	u8 root_sha256[SHA256_SUM_LEN];
 	u64 root_bytes_used;
 	long long data_size;
+	int rebuild_kernel = 0;
+	int rebuild_user = 0;
 	int ret;
 
 	wxr_set_status(WXR_STATUS_VALIDATING);
@@ -488,64 +641,165 @@ int wxr_nand_write_production(const struct wxr_image *image)
 	if (ret)
 		return ret;
 	if (archive.kernel.length > kernel_partition.length ||
-	    archive.root.length > user_partition.length)
+	    archive.root.length > user_partition.length) {
+		wxr_error_set(WXR_ERROR_CAPACITY, "NAND production",
+			      "partition capacity", -EFBIG, 0);
 		return -EFBIG;
+	}
 
-	ret = ubi_part(WXR_NAND_USER_PARTITION, NULL);
-	if (ret)
+	ret = wxr_attach_nand_partition(WXR_NAND_USER_PARTITION,
+					&user_partition);
+	if (ret == EINVAL)
+		rebuild_user = 1;
+	else if (ret)
 		return ret;
-	ret = wxr_precheck_user_volumes(archive.root.length);
-	if (ret)
+	else {
+		ret = wxr_precheck_user_volumes(archive.root.length);
+		if (ret)
+			return ret;
+	}
+	ret = wxr_attach_nand_partition(WXR_NAND_PRODUCTION_PARTITION,
+					&kernel_partition);
+	if (ret == EINVAL)
+		rebuild_kernel = 1;
+	else if (ret)
 		return ret;
-	ret = ubi_part(WXR_NAND_PRODUCTION_PARTITION, NULL);
-	if (ret)
-		return ret;
-	ret = wxr_precheck_kernel_volume(archive.kernel.length);
-	if (ret)
-		return ret;
+	else {
+		ret = wxr_precheck_kernel_volume(archive.kernel.length);
+		if (ret)
+			return ret;
+	}
 
 	wxr_sha256(archive.kernel.data, archive.kernel.length, kernel_sha256);
 	wxr_sha256(archive.root.data, archive.root.length, root_sha256);
 	wxr_set_status(WXR_STATUS_WRITING);
 
-	ret = ubi_part(WXR_NAND_USER_PARTITION, NULL);
-	if (ret)
-		return ret;
+	if (rebuild_user) {
+		ret = wxr_reformat_nand_partition(WXR_NAND_USER_PARTITION,
+						  &user_partition);
+		if (ret)
+			return ret;
+		ret = wxr_precheck_user_volumes(archive.root.length);
+		if (ret) {
+			wxr_error_set(ret == -ENOSPC ? WXR_ERROR_CAPACITY :
+				      WXR_ERROR_IO, "NAND production",
+				      "reformatted user_property capacity", ret, 1);
+			return ret;
+		}
+	} else {
+		ret = wxr_attach_nand_partition(WXR_NAND_USER_PARTITION,
+						&user_partition);
+		if (ret)
+			return ret;
+	}
 	ret = wxr_remove_volume_if_present(WXR_NAND_DATA_VOLUME);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, "NAND production",
+			      "overlay volume removal", ret, 1);
 		return ret;
+	}
 	ret = wxr_remove_volume_if_present(WXR_NAND_ROOTFS_VOLUME);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, "NAND production",
+			      "rootfs volume removal", ret, 1);
 		return ret;
+	}
 	ret = ubi_volume_create(WXR_NAND_ROOTFS_VOLUME, archive.root.length, 1);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, "NAND production",
+			      "rootfs volume creation", -ret, 1);
 		return -ret;
+	}
 	ret = wxr_write_volume(WXR_NAND_ROOTFS_VOLUME, &archive.root);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, "NAND production", "rootfs write",
+			      ret, 1);
 		return ret;
+	}
 	ret = wxr_verify_root_volume(&archive.root, root_sha256);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_VERIFY, "NAND production",
+			      "rootfs readback", ret, 1);
 		return ret;
+	}
 
 	data_size = ubi_get_available_bytes();
-	if (data_size <= 0)
+	if (data_size <= 0) {
+		wxr_error_set(WXR_ERROR_CAPACITY, "NAND production",
+			      "overlay capacity", -ENOSPC, 1);
 		return -ENOSPC;
+	}
 	ret = ubi_volume_create(WXR_NAND_DATA_VOLUME, data_size, 1);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, "NAND production",
+			      "overlay volume creation", -ret, 1);
 		return -ret;
+	}
 
-	ret = ubi_part(WXR_NAND_PRODUCTION_PARTITION, NULL);
-	if (ret)
-		return ret;
-	ret = wxr_prepare_volume(WXR_NAND_KERNEL_VOLUME, archive.kernel.length);
-	if (ret)
-		return ret;
+	if (rebuild_kernel) {
+		ret = wxr_rebuild_kernel_partition(
+			WXR_NAND_PRODUCTION_PARTITION, &kernel_partition,
+			archive.kernel.length);
+		if (ret)
+			return ret;
+	} else {
+		ret = wxr_attach_nand_partition(WXR_NAND_PRODUCTION_PARTITION,
+						&kernel_partition);
+		if (ret) {
+			wxr_error_set(WXR_ERROR_IO, "NAND production",
+				      "kernel write attach", ret, 1);
+			return ret;
+		}
+		ret = wxr_prepare_volume(WXR_NAND_KERNEL_VOLUME,
+					 archive.kernel.length);
+		if (ret) {
+			wxr_error_set(ret == -ENOSPC ? WXR_ERROR_CAPACITY :
+				      WXR_ERROR_IO, "NAND production",
+				      "kernel volume preparation", ret, 1);
+			return ret;
+		}
+	}
 	ret = wxr_write_volume(WXR_NAND_KERNEL_VOLUME, &archive.kernel);
-	if (ret)
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, "NAND production", "kernel write",
+			      ret, 1);
 		return ret;
+	}
 	ret = wxr_verify_kernel_volume(archive.kernel.length, kernel_sha256);
+	if (ret) {
+		wxr_error_set(WXR_ERROR_VERIFY, "NAND production",
+			      "kernel readback", ret, 1);
+		return ret;
+	}
+
+	wxr_set_status(WXR_STATUS_SUCCESS);
+	return 0;
+}
+
+int wxr_nand_reset_configuration(void)
+{
+	struct wxr_nand_partition partition;
+	int ret;
+
+	wxr_set_status(WXR_STATUS_VALIDATING);
+	ret = wxr_attach_nand_partition(WXR_NAND_USER_PARTITION, &partition);
 	if (ret)
 		return ret;
+	ret = ubi_volume_get_info(WXR_NAND_DATA_VOLUME, NULL, NULL);
+	if (ret) {
+		wxr_error_set(WXR_ERROR_TARGET, "NAND configuration",
+			      "rootfs_data volume lookup", -ret, 0);
+		return -ret;
+	}
+
+	wxr_set_status(WXR_STATUS_WRITING);
+	ret = ubi_volume_clear(WXR_NAND_DATA_VOLUME);
+	if (ret) {
+		wxr_error_set(WXR_ERROR_IO, "NAND configuration",
+			      "rootfs_data zero-length update", -ret, 1);
+		wxr_set_status(WXR_STATUS_FAILURE);
+		return -ret;
+	}
 
 	wxr_set_status(WXR_STATUS_SUCCESS);
 	return 0;

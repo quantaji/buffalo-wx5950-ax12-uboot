@@ -33,10 +33,12 @@
  * execute that many retries, and keep sending retry packets until that time
  * is reached.
  */
-#ifndef CONFIG_NET_RETRY_COUNT
-# define TIMEOUT_COUNT	5		/* # of timeouts before giving up */
-#else
+#if defined(CONFIG_BOOTP_RETRY_COUNT)
+# define TIMEOUT_COUNT	(CONFIG_BOOTP_RETRY_COUNT)
+#elif defined(CONFIG_NET_RETRY_COUNT)
 # define TIMEOUT_COUNT	(CONFIG_NET_RETRY_COUNT)
+#else
+# define TIMEOUT_COUNT	5		/* # of timeouts before giving up */
 #endif
 #define TIMEOUT_MS	((3 + (TIMEOUT_COUNT * 5)) * 1000)
 

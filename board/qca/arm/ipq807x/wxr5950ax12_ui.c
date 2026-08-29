@@ -319,6 +319,7 @@ static int wxr_dispatch_action(cmd_tbl_t *cmdtp, enum wxr_action action)
 {
 	int ret;
 
+	wxr_error_clear();
 	switch (action) {
 	case WXR_ACTION_NAND_PRODUCTION:
 		ret = wxr_nand_boot_production();
@@ -335,34 +336,40 @@ static int wxr_dispatch_action(cmd_tbl_t *cmdtp, enum wxr_action action)
 	case WXR_ACTION_FAT_RECOVERY:
 		puts("WXR boot menu: FAT recovery is unavailable\n");
 		ret = -ENOSYS;
+		wxr_error_set(WXR_ERROR_INTERNAL, "FAT recovery",
+			      "action availability", ret, 0);
 		break;
 	case WXR_ACTION_TFTP_RECOVERY:
 		puts("WXR boot menu: TFTP recovery is unavailable\n");
 		ret = -ENOSYS;
+		wxr_error_set(WXR_ERROR_INTERNAL, "TFTP recovery",
+			      "action availability", ret, 0);
 		break;
 	case WXR_ACTION_WEB_FIXED:
-		puts("WXR boot menu: fixed-IP web recovery is unavailable\n");
-		ret = -ENOSYS;
+		ret = wxr_web_fixed(cmdtp);
 		break;
 	case WXR_ACTION_WEB_DHCP:
-		puts("WXR boot menu: DHCP web recovery is unavailable\n");
-		ret = -ENOSYS;
+		ret = wxr_web_dhcp(cmdtp);
 		break;
 	case WXR_ACTION_REBOOT:
 		run_command("reset", 0);
 		puts("WXR boot menu: reset returned\n");
 		ret = -EIO;
+		wxr_error_set(WXR_ERROR_BOOT, "Router reboot", "reset handoff",
+			      ret, 0);
 		break;
 	case WXR_ACTION_CONSOLE:
 		wxr_set_status(WXR_STATUS_READY);
 		return 0;
 	default:
 		ret = -EINVAL;
+		wxr_error_set(WXR_ERROR_INTERNAL, "Boot menu", "action selection",
+			      ret, 0);
 		break;
 	}
 
 	if (ret)
-		printf("WXR boot menu: action failed (%d)\n", ret);
+		printf("WXR boot menu: %s\n", wxr_error_get(NULL));
 	if (ret)
 		wxr_set_status(WXR_STATUS_FAILURE);
 	return ret;

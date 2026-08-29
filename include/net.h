@@ -321,6 +321,7 @@ struct vlan_ethernet_hdr {
 #define PROT_VLAN	0x8100		/* IEEE 802.1q protocol		*/
 
 #define IPPROTO_ICMP	 1	/* Internet Control Message Protocol	*/
+#define IPPROTO_TCP	 6	/* Transmission Control Protocol	*/
 #define IPPROTO_UDP	17	/* User Datagram Protocol		*/
 
 /*
@@ -513,7 +514,7 @@ extern int		net_restart_wrap;	/* Tried all network devices */
 extern int 		tftp_our_port;
 enum proto_t {
 	BOOTP, RARP, ARP, TFTPGET, DHCP, PING, DNS, NFS, CDP, NETCONS, SNTP,
-	TFTPSRV, TFTPPUT, LINKLOCAL
+	TFTPSRV, TFTPPUT, LINKLOCAL, WXR_WEB
 };
 
 extern char	net_boot_file_name[1024];/* Boot File name */
@@ -647,6 +648,11 @@ static inline void net_send_packet(uchar *pkt, int len)
  */
 int net_send_udp_packet(uchar *ether, struct in_addr dest, int dport,
 			int sport, int payload_len);
+
+#if defined(CONFIG_PROT_TCP)
+int net_send_tcp_packet(int payload_len, struct in_addr dhost, int dport,
+			int sport, u8 action, u32 tcp_seq_num, u32 tcp_ack_num);
+#endif
 
 /* Processes a received packet */
 void net_process_received_packet(uchar *in_packet, int len);
