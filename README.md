@@ -2,7 +2,11 @@
 
 
 
-This is a custom U-Boot for the Buffalo WXR-5950AX12. Its features include:
+This is a custom U-Boot for the Buffalo WXR-5950AX12.
+
+This project is forked from the [Qualcomm CodeLinaro QSDK U-Boot 2016 repository](https://git.codelinaro.org/clo/qsdk/oss/boot/u-boot-2016), with its upstream commit history and authorship retained.
+
+Its features include:
 
 - **NAND boot:** Boot either the production system or a recovery system from the router's internal NAND storage.
 - **Partitioned USB boot:** Boot production or recovery images directly from their dedicated partitions on a USB storage device (using a custom WXR USB boot contract).
