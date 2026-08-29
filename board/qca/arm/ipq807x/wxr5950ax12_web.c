@@ -591,7 +591,9 @@ int wxr_web_fixed(cmd_tbl_t *cmdtp)
 	}
 	if (!ret)
 		ret = -EIO;
-	wxr_error_set(WXR_ERROR_IO, "Fixed-IP Web", "network service",
+	wxr_error_set(WXR_ERROR_IO, "Fixed-IP Web",
+		      ret == -ENETDOWN ?
+		      "Ethernet link readiness" : "network service",
 		      ret, 0);
 	wxr_set_status(WXR_STATUS_FAILURE);
 	return ret;
@@ -678,7 +680,10 @@ int wxr_web_dhcp(cmd_tbl_t *cmdtp)
 	}
 	if (ret) {
 		wxr_error_set(WXR_ERROR_IO, "DHCP Web",
-			      "DHCP lease acquisition", ret, 0);
+			      ret == -ENETDOWN ?
+			      "Ethernet link readiness" :
+			      "DHCP lease acquisition",
+			      ret, 0);
 		wxr_set_status(WXR_STATUS_FAILURE);
 		goto restore;
 	}

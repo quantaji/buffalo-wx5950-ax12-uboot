@@ -423,6 +423,11 @@ void autoboot_command(const char *s)
 #endif /* CONFIG_MENUKEY */
 
 #ifdef CONFIG_IPQ_ETH_INIT_DEFER
+#ifdef CONFIG_BUFFALO_WXR5950AX12
+	/* WXR preboot network actions may have already registered EDMA. */
+	if (eth_get_dev())
+		return;
+#endif
 	puts("\nNet:   ");
 	eth_initialize();
 #endif

@@ -15,7 +15,9 @@
  */
 
 #include <common.h>
+#include <console.h>
 #include <net.h>
+#include <watchdog.h>
 #include <asm-generic/errno.h>
 #include <asm/io.h>
 #include <malloc.h>
@@ -47,6 +49,8 @@ static struct ipq807x_eth_dev *ipq807x_edma_dev[IPQ807X_EDMA_DEV];
 #ifdef CONFIG_BUFFALO_WXR5950AX12
 #define WXR_GCC_NSS_PPE_RESET		0x01868014
 #define WXR_GCC_EDMA_HW_RESET		0x00300000
+#define WXR_PHY_LINK_TIMEOUT_MS		5000UL
+#define WXR_PHY_LINK_POLL_MS		100UL
 
 struct ipq807x_aqr_port_state {
 	bool configured;
@@ -65,6 +69,44 @@ struct ipq807x_port_phy_info {
 };
 
 static struct ipq807x_port_phy_info phy_info[PHY_MAX];
+
+static int wxr5950ax12_wait_for_link(struct ipq807x_eth_dev *priv)
+{
+	struct phy_ops *ops;
+	ulong start = get_timer(0);
+	int i;
+
+	puts("WXR Ethernet: waiting for a PHY link\n");
+
+	for (;;) {
+		for (i = 0; i < PHY_MAX; i++) {
+			if (!phy_info[i].present)
+				continue;
+
+			ops = priv->ops[i];
+			if (!ops || !ops->phy_get_link_status) {
+				printf("WXR %s PHY link operation is not mapped\n",
+				       phy_info[i].label);
+				return -EINVAL;
+			}
+
+			if (!ops->phy_get_link_status(priv->mac_unit,
+						      phy_info[i].phy_address))
+				return 0;
+		}
+
+		if (ctrlc())
+			return -EINTR;
+
+		if (get_timer(start) >= WXR_PHY_LINK_TIMEOUT_MS) {
+			puts("WXR Ethernet: no PHY link became ready within 5 seconds\n");
+			return -ENETDOWN;
+		}
+
+		WATCHDOG_RESET();
+		mdelay(WXR_PHY_LINK_POLL_MS);
+	}
+}
 
 static void wxr5950ax12_edma_hw_reset(void)
 {
@@ -912,6 +954,11 @@ static int ipq807x_eth_init(struct eth_device *eth_dev, bd_t *this)
 	int mac_speed = 0, speed_clock1 = 0, speed_clock2 = 0;
 	int phy_addr;
 	int ret;
+
+	ret = wxr5950ax12_wait_for_link(priv);
+	if (ret)
+		return ret;
+
 	/*
 	 * Check PHY link, speed, Duplex on all phys.
 	 * we will proceed even if single link is up
@@ -1081,7 +1128,7 @@ static int ipq807x_eth_init(struct eth_device *eth_dev, bd_t *this)
 
 	if (linkup <= 0) {
 		/* No PHY link is alive */
-		return -1;
+		return -ENETDOWN;
 	}
 
 	/*

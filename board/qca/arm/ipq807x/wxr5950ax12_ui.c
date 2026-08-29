@@ -16,6 +16,9 @@
 #define WXR_MENU_TITLE	\
 	"\e[0;34m( ( ( \e[1;39mOpenWrt\e[0;34m ) ) ) " \
 	"\e[0;36m[Buffalo WXR-5950AX12]\e[0m"
+#define WXR_MENU_FOOTER	\
+	"\e[0;36mhttps://github.com/quantaji/" \
+	"buffalo-wxr-5950ax12-uboot\e[0m"
 
 enum wxr_action {
 	WXR_ACTION_NAND_PRODUCTION,
@@ -299,6 +302,7 @@ static int wxr_install_menu_entries(void)
 
 	if ((getenv("bootmenu_9") && setenv("bootmenu_9", NULL)) ||
 	    setenv("bootmenu_title", WXR_MENU_TITLE) ||
+	    setenv("bootmenu_footer", WXR_MENU_FOOTER) ||
 	    setenv("bootmenu_exit", "Exit to U-Boot console.") ||
 	    setenv("bootmenu_delay", WXR_MENU_DELAY))
 		return -ENOMEM;
@@ -318,11 +322,38 @@ static int wxr_set_menu_default(enum wxr_action action)
 	return setenv("bootmenu_default", value) ? -ENOMEM : 0;
 }
 
+static int wxr_prepare_network(void)
+{
+	int devices;
+	int ret;
+
+	if (eth_get_dev())
+		return 0;
+
+	puts("Net:   ");
+	devices = eth_initialize();
+	if (devices > 0)
+		return 0;
+
+	ret = -ENODEV;
+	wxr_error_set(WXR_ERROR_IO, "Network initialization",
+		      "Ethernet device registration", ret, 0);
+	return ret;
+}
+
 static int wxr_dispatch_action(cmd_tbl_t *cmdtp, enum wxr_action action)
 {
 	int ret;
 
 	wxr_error_clear();
+	if (action == WXR_ACTION_TFTP_RECOVERY ||
+	    action == WXR_ACTION_WEB_FIXED ||
+	    action == WXR_ACTION_WEB_DHCP) {
+		ret = wxr_prepare_network();
+		if (ret)
+			goto complete;
+	}
+
 	switch (action) {
 	case WXR_ACTION_NAND_PRODUCTION:
 		ret = wxr_nand_boot_production();
@@ -365,6 +396,7 @@ static int wxr_dispatch_action(cmd_tbl_t *cmdtp, enum wxr_action action)
 		break;
 	}
 
+complete:
 	if (ret)
 		printf("WXR boot menu: %s\n", wxr_error_get(NULL));
 	if (ret)

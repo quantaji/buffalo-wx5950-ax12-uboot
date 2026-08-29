@@ -502,6 +502,13 @@ void menu_display_statusline(struct menu *m)
 	puts(ANSI_CLEAR_LINE_TO_END);
 	printf(ANSI_CURSOR_POSITION, menu->count + 7, 1);
 	puts(ANSI_CLEAR_LINE);
+	printf(ANSI_CURSOR_POSITION, menu->count + 8, 1);
+	puts(ANSI_CLEAR_LINE);
+	title = getenv("bootmenu_footer");
+	if (title) {
+		puts(title);
+		puts(ANSI_CLEAR_LINE_TO_END);
+	}
 }
 
 #ifdef CONFIG_MENU_SHOW

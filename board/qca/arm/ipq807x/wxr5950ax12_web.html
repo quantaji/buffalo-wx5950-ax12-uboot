@@ -95,6 +95,20 @@
       font-size: 12px;
     }
 
+    .project-footer {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 12px;
+      text-align: center;
+    }
+
+    .project-footer a {
+      color: var(--recovery);
+      text-decoration: none;
+    }
+
+    .project-footer a:hover { text-decoration: underline; }
+
     .panel-grid {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
@@ -435,6 +449,10 @@
     <div class="reboot-action">
       <button class="reboot-button" type="button" data-action="reboot">Reboot Router</button>
     </div>
+
+    <footer class="project-footer">
+      Project: <a href="https://github.com/quantaji/buffalo-wxr-5950ax12-uboot" target="_blank" rel="noopener noreferrer">quantaji/buffalo-wxr-5950ax12-uboot</a>
+    </footer>
 
   </main>
 

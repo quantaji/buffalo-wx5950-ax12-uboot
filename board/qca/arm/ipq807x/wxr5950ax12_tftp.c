@@ -173,7 +173,9 @@ restore:
 	if (ret < 0) {
 		if (transfer_attempted)
 			wxr_error_set(WXR_ERROR_IO, "TFTP recovery",
-				      "TFTP transfer", ret, 0);
+				      ret == -ENETDOWN ?
+				      "Ethernet link readiness" : "TFTP transfer",
+				      ret, 0);
 		return ret;
 	}
 	if (!received) {

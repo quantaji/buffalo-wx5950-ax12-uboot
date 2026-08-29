@@ -53,3 +53,7 @@ The Power LED reports the current action independently of the three mode LEDs.
 ## WebUI
 
 ![Buffalo WXR-5950AX12 U-Boot Web UI](WebUI.png)
+
+## RAM U-Boot
+
+The project builds a separate RAM-only U-Boot from the same controlled source. The installed U-Boot can load its recovery-compatible FIT into memory, normally through TFTP, and start it with `bootm` without writing `APPSBL` or `APPSBL_1`. This RAM build runs the shared board, storage, network, USB, recovery, button, and LED code on the real router before the flashable image is installed. It can also use `bootelf` to chain-load U-Boot images read from `APPSBL` or `APPSBL_1` for further verification, reducing persistent-installation risk while leaving the final Qualcomm SBL boot check as a separate step.
